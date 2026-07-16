@@ -3,5 +3,11 @@ dist/
 cdk.out/
 .env
 .env.local
+.env.*.local
 .DS_Store
 *.js.map
+tsconfig.tsbuildinfo
+.vercel
+first-light-*.md
+niamh_plan.jpg
+assets/
