@@ -2,12 +2,12 @@ import { Link } from "react-router-dom";
 import { ContactForm } from "../components/ContactForm";
 
 const CLIENT_LOGOS = [
-  { src: "/logos/clients/kukoon.png", alt: "Kukoon" },
-  { src: "/logos/clients/nearby.png", alt: "Nearby" },
-  { src: "/logos/clients/forest-feast.png", alt: "Forest Feast" },
-  { src: "/logos/clients/sw-wholesale.png", alt: "S&W Wholesale" },
-  { src: "/logos/clients/belfast-zoo.png", alt: "Belfast Zoo" },
-  { src: "/logos/clients/cancer-council-nsw.png", alt: "Cancer Council NSW" },
+  { src: "logos/clients/kukoon.png", alt: "Kukoon" },
+  { src: "logos/clients/nearby.png", alt: "Nearby" },
+  { src: "logos/clients/forest-feast.png", alt: "Forest Feast" },
+  { src: "logos/clients/sw-wholesale.png", alt: "S&W Wholesale" },
+  { src: "logos/clients/belfast-zoo.png", alt: "Belfast Zoo" },
+  { src: "logos/clients/cancer-council-nsw.png", alt: "Cancer Council NSW" },
 ];
 
 export default function Home() {
@@ -17,7 +17,7 @@ export default function Home() {
       <section className="bg-coral py-4 md:py-5 text-center">
         <div className="mx-auto max-w-md px-6">
           <img
-            src="/logos/1-cropped.png"
+            src="logos/1-cropped.png"
             alt="First Light Marketing"
             className="mx-auto h-auto w-full max-w-[280px]"
           />
@@ -43,7 +43,7 @@ export default function Home() {
           {/* Right: image of Niamh */}
           <div className="flex justify-center">
             <img
-              src="/images/niamh.png"
+              src="images/niamh.png"
               alt="Niamh Donnelly"
               className="shadow-lg w-full max-w-sm object-cover aspect-[3/4]"
             />

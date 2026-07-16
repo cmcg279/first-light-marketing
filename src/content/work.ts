@@ -31,7 +31,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       { label: "Year-on-year", value: "+289%" },
       { label: "Website visitors", value: "461.9K" },
     ],
-    image: "/images/work/kukoon-black-friday.jpg",
+    image: "images/work/kukoon-black-friday.jpg",
   },
   {
     slug: "kukoon-influencer-drive",
@@ -66,7 +66,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       { label: "First year", value: "£888K revenue" },
       { label: "Efficiency", value: "All from one content shoot" },
     ],
-    image: "/images/work/kukoon-caoimhe.jpg",
+    image: "images/work/kukoon-caoimhe.jpg",
   },
   {
     slug: "kukoon-peter-irvine",
@@ -80,7 +80,7 @@ export const CASE_STUDIES: CaseStudy[] = [
         "Well done tonight on a wonderful event, well attended and very well executed 👏 Special shoutout to Niamh D for pulling it all together!",
       author: "Kukoon team",
     },
-    image: "/images/work/kukoon-peter-irvine.jpg",
+    image: "images/work/kukoon-peter-irvine.jpg",
   },
   {
     slug: "tranquility-head-spa",

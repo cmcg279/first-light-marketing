@@ -8,7 +8,7 @@ export function Footer() {
         <div className="flex flex-col gap-4">
           <Link to="/" className="flex items-center">
             <img
-              src="/logos/2-transparent.png"
+              src="logos/2-transparent.png"
               alt="First Light Marketing"
               className="h-10 w-auto"
             />

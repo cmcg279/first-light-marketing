@@ -11,7 +11,7 @@ export function Header() {
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <Link to="/" className="group" onClick={() => setOpen(false)}>
           <img
-            src="/logos/6-cropped.png"
+            src="logos/6-cropped.png"
             alt="First Light Marketing"
             className="h-8 w-auto"
           />
