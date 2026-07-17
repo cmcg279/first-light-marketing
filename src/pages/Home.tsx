@@ -32,12 +32,12 @@ export default function Home() {
             <h2 className="font-serif text-3xl font-bold leading-tight text-body md:text-4xl lg:text-5xl">
               Bringing clarity to your marketing.
             </h2>
-            <a
-              href="#contact"
+            <button
+              onClick={() => document.getElementById("contact")?.scrollIntoView({ behavior: "smooth" })}
               className="mt-8 inline-block rounded-full bg-coral px-8 py-3.5 font-sans text-sm font-semibold uppercase tracking-wider text-off-white transition-all hover:bg-coral-700 hover:shadow-lg"
             >
               See how I can help
-            </a>
+            </button>
           </div>
 
           {/* Right: image of Niamh */}
