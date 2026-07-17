@@ -11,8 +11,8 @@ const config: Config = {
         body: "#1A1A1A",
       },
       fontFamily: {
-        serif: ["Playfair Display", "Georgia", "serif"],
-        sans: ["Inter", "system-ui", "sans-serif"],
+        serif: ["Fraunces", "Georgia", "serif"],
+        sans: ["Public Sans", "system-ui", "sans-serif"],
       },
       backgroundImage: {
         sunburst:

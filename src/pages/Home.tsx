@@ -1,5 +1,6 @@
-import { Link } from "react-router-dom";
 import { LeadFormCard } from "../components/LeadFormCard";
+import { SelectedResults } from "../components/SelectedResults";
+import { TikTokWall } from "../components/TikTokWall";
 
 const CLIENT_LOGOS = [
   { src: "logos/clients/kukoon.png", alt: "Kukoon" },
@@ -104,15 +105,9 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── See the work ── */}
-      <div className="bg-cream pb-24 text-center">
-        <Link
-          to="/work"
-          className="inline-block rounded-full border-2 border-body px-6 py-3 font-sans text-sm font-semibold uppercase tracking-wider text-body transition-all hover:bg-body hover:text-cream"
-        >
-          See the full case studies
-        </Link>
-      </div>
+      <SelectedResults />
+
+      <TikTokWall />
 
       {/* ── Contact form ── */}
       <section id="contact" className="bg-coral px-6 py-20 scroll-mt-20">

@@ -5,11 +5,13 @@ export function CaseStudyCard({ study }: { study: CaseStudy }) {
     <article className="group relative overflow-hidden rounded-2xl border border-body/10 bg-white/60 transition-all hover:border-coral/30 hover:shadow-lg">
       {/* Image */}
       {study.image && (
-        <div className="aspect-[16/10] overflow-hidden">
+        <div className="aspect-[16/10] overflow-hidden bg-white">
           <img
             src={study.image}
             alt={study.title}
-            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+            className={`h-full w-full transition-transform duration-500 group-hover:scale-105 ${
+              study.imageFit === "contain" ? "object-contain p-4" : "object-cover"
+            }`}
           />
         </div>
       )}
@@ -59,6 +61,23 @@ export function CaseStudyCard({ study }: { study: CaseStudy }) {
             <p className="font-sans text-sm leading-relaxed text-body/70 italic">&ldquo;{study.testimonial.quote}&rdquo;</p>
             <footer className="mt-2 font-sans text-xs font-medium text-coral">{study.testimonial.author}</footer>
           </blockquote>
+        )}
+
+        {study.images && study.images.length > 0 && (
+          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            {study.images.map((image) => (
+              <div
+                key={image.src}
+                className="overflow-hidden rounded-xl border border-body/10 bg-white"
+              >
+                <img
+                  src={image.src}
+                  alt={image.alt}
+                  className="h-44 w-full object-contain p-2 transition-transform duration-500 group-hover:scale-105"
+                />
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </article>

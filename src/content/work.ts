@@ -5,6 +5,8 @@ export interface CaseStudy {
   category: "strategy" | "content";
   summary: string;
   image?: string;
+  imageFit?: "cover" | "contain";
+  images?: { src: string; alt: string }[];
   role?: string[];
   results?: { label: string; value: string }[];
   testimonial?: { quote: string; author: string };
@@ -31,7 +33,17 @@ export const CASE_STUDIES: CaseStudy[] = [
       { label: "Year-on-year", value: "+289%" },
       { label: "Website visitors", value: "461.9K" },
     ],
-    image: "images/work/kukoon-black-friday.jpg",
+    image: "images/work/portfolio/kukoon-black-friday-deal-page.png",
+    images: [
+      {
+        src: "images/work/portfolio/kukoon-black-friday-results.png",
+        alt: "Kukoon Black Friday sales results chart",
+      },
+      {
+        src: "images/work/portfolio/kukoon-black-friday-skydive.jpg",
+        alt: "Skydive Ireland Black Friday campaign content",
+      },
+    ],
   },
   {
     slug: "kukoon-influencer-drive",
@@ -52,6 +64,18 @@ export const CASE_STUDIES: CaseStudy[] = [
       { label: "Avg CPC", value: "£0.89" },
       { label: "Click-through rate", value: "2.51%" },
     ],
+    image: "images/work/portfolio/kukoon-influencer-results.png",
+    imageFit: "contain",
+    images: [
+      {
+        src: "images/work/portfolio/kukoon-influencer-creator-living-room.png",
+        alt: "Influencer creator content for Kukoon",
+      },
+      {
+        src: "images/work/portfolio/kukoon-influencer-creator-rug.png",
+        alt: "Influencer creator rug content for Kukoon",
+      },
+    ],
   },
   {
     slug: "kukoon-product-launch",
@@ -66,7 +90,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       { label: "First year", value: "£888K revenue" },
       { label: "Efficiency", value: "All from one content shoot" },
     ],
-    image: "images/work/kukoon-caoimhe.jpg",
+    image: "images/work/portfolio/kukoon-caoimhe-launch.png",
   },
   {
     slug: "kukoon-peter-irvine",
@@ -80,7 +104,21 @@ export const CASE_STUDIES: CaseStudy[] = [
         "Well done tonight on a wonderful event, well attended and very well executed 👏 Special shoutout to Niamh D for pulling it all together!",
       author: "Kukoon team",
     },
-    image: "images/work/kukoon-peter-irvine.jpg",
+    image: "images/work/portfolio/kukoon-peter-irvine-signage.jpg",
+    images: [
+      {
+        src: "images/work/portfolio/kukoon-peter-irvine-goodie-bags.jpg",
+        alt: "Kukoon Peter Irvine event goodie bags",
+      },
+      {
+        src: "images/work/portfolio/kukoon-peter-irvine-turnout.jpg",
+        alt: "Kukoon Peter Irvine launch event turnout",
+      },
+      {
+        src: "images/work/portfolio/kukoon-peter-irvine-feedback.jpg",
+        alt: "Feedback message for Kukoon Peter Irvine launch event",
+      },
+    ],
   },
   {
     slug: "tranquility-head-spa",
@@ -93,6 +131,8 @@ export const CASE_STUDIES: CaseStudy[] = [
       { label: "Views", value: "~90K" },
       { label: "Impact", value: "Fully booked 1+ month" },
     ],
+    image: "images/work/portfolio/tranquility-head-spa-analytics.jpg",
+    imageFit: "contain",
   },
   {
     slug: "naturopathic-way",
@@ -106,6 +146,17 @@ export const CASE_STUDIES: CaseStudy[] = [
         "Thanks so much Niamh, the content was great and it was so so nice not having to worry about lifting my phone all day trying to remember about content.",
       author: "Shaundelle, The Naturopathic Way",
     },
+    image: "images/work/portfolio/naturopathic-way-stand.jpg",
+    images: [
+      {
+        src: "images/work/portfolio/naturopathic-way-outdoor-session.jpg",
+        alt: "Outdoor wellness event content for The Naturopathic Way",
+      },
+      {
+        src: "images/work/portfolio/naturopathic-way-table-detail.jpg",
+        alt: "Table detail content from The Naturopathic Way event",
+      },
+    ],
   },
   {
     slug: "tiktok-content",
@@ -120,6 +171,8 @@ export const CASE_STUDIES: CaseStudy[] = [
       { label: "Feast, Rostrevor", value: "33K plays · 849 likes · 95 shares" },
       { label: "Primrose Cafe, Portadown", value: "35K plays · 798 likes · 629 shares" },
     ],
+    image: "images/work/portfolio/tranquility-head-spa-analytics.jpg",
+    imageFit: "contain",
   },
   {
     slug: "ugc-brands",
