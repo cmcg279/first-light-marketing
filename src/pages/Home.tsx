@@ -32,12 +32,12 @@ export default function Home() {
             <h2 className="font-serif text-3xl font-bold leading-tight text-body md:text-4xl lg:text-5xl">
               Bringing clarity to your marketing.
             </h2>
-            <Link
-              to="/contact"
+            <a
+              href="#contact"
               className="mt-8 inline-block rounded-full bg-coral px-8 py-3.5 font-sans text-sm font-semibold uppercase tracking-wider text-off-white transition-all hover:bg-coral-700 hover:shadow-lg"
             >
-              Get in touch
-            </Link>
+              See how I can help
+            </a>
           </div>
 
           {/* Right: image of Niamh */}
@@ -115,7 +115,7 @@ export default function Home() {
       </div>
 
       {/* ── Contact form ── */}
-      <section className="bg-coral px-6 py-20">
+      <section id="contact" className="bg-coral px-6 py-20 scroll-mt-20">
         <div className="mx-auto max-w-lg text-center">
           <p className="font-sans text-xs font-semibold uppercase tracking-[0.2em] text-off-white/60">
             Get in touch
