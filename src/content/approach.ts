@@ -12,13 +12,13 @@ export const APPROACH = {
       title: "Engage",
       subtitle: "Building trust and creating connection",
       description:
-        "Once people know you exist, they need a reason to choose you. This stage nurtures relationships through valuable, consistent marketing — the kind that builds credibility, tells your story, and makes your audience feel understood.",
+        "Once people know you exist, they need a reason to choose you. This stage nurtures relationships through valuable, consistent marketing. The kind that builds credibility, tells your story, and makes your audience feel understood.",
     },
     {
       title: "Convert",
       subtitle: "Turning interest into action",
       description:
-        "This is where curiosity becomes commitment. I'll help you encourage customers to take the next step — whether that's making a purchase, booking a service, or getting in touch — with clear calls to action and a seamless experience.",
+        "This is where curiosity becomes commitment. I'll help you encourage customers to take the next step, whether that's making a purchase, booking a service, or getting in touch, with clear calls to action and a seamless experience.",
     },
     {
       title: "Retain",
@@ -30,9 +30,9 @@ export const APPROACH = {
       title: "Advocate",
       subtitle: "Turning customers into brand ambassadors",
       description:
-        "Satisfied customers become your biggest supporters — leaving reviews, sharing their experiences, and recommending your business to friends. I'll help you harness that word-of-mouth power and turn happy customers into a growth engine.",
+        "Satisfied customers become your biggest supporters, leaving reviews, sharing their experiences, and recommending your business to friends. I'll help you harness that word-of-mouth power and turn happy customers into a growth engine.",
     },
   ],
   closing:
-    "With experience across every stage of the customer journey, I create marketing that doesn't just look good — it delivers results.",
+    "With experience across every stage of the customer journey, I create marketing that doesn't just look good, it delivers results.",
 } as const;

@@ -5,7 +5,7 @@ import { CONTACT } from "../content/site";
 export default function Contact() {
   return (
     <>
-      <HeroSection heading="Let's talk" subheading="I'm ready when you are. Every project starts with a conversation — no pressure, no obligation." sunburst />
+      <HeroSection heading="Let's talk" subheading="I'm ready when you are. Every project starts with a conversation, no pressure, no obligation." sunburst />
 
       <section className="mx-auto max-w-6xl px-6 py-24">
         <div className="mx-auto grid max-w-3xl gap-12 md:grid-cols-5">

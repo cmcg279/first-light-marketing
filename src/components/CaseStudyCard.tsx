@@ -57,7 +57,7 @@ export function CaseStudyCard({ study }: { study: CaseStudy }) {
         {study.testimonial && (
           <blockquote className="mt-6 rounded-xl border-l-2 border-coral bg-coral/[0.03] px-4 py-4">
             <p className="font-sans text-sm leading-relaxed text-body/70 italic">&ldquo;{study.testimonial.quote}&rdquo;</p>
-            <footer className="mt-2 font-sans text-xs font-medium text-coral">— {study.testimonial.author}</footer>
+            <footer className="mt-2 font-sans text-xs font-medium text-coral">{study.testimonial.author}</footer>
           </blockquote>
         )}
       </div>

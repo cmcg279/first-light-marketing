@@ -124,7 +124,7 @@ export default function Home() {
             I&rsquo;m ready when you are
           </h2>
           <p className="mx-auto mt-4 max-w-md font-sans text-lg text-off-white/80">
-            Every project starts with a conversation &mdash; no pressure, no
+            Every project starts with a conversation, no pressure, no
             obligation.
           </p>
         </div>

@@ -40,7 +40,7 @@ export default function Services() {
         </h2>
         <p className="mx-auto mt-4 max-w-lg font-sans text-lg text-off-white/80">
           Let&rsquo;s chat about what you need. Every project starts with a
-          conversation &mdash; no pressure, no obligation.
+          conversation, no pressure, no obligation.
         </p>
         <Link
           to="/contact"

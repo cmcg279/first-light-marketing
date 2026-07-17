@@ -14,7 +14,7 @@ export default function Work() {
       <section className="mx-auto max-w-6xl px-6 py-24">
         <div className="mb-10">
           <p className="font-sans text-xs font-semibold uppercase tracking-[0.2em] text-coral">Campaigns & Strategy</p>
-          <p className="mt-2 max-w-2xl font-sans text-base text-body/60">Full-funnel campaign delivery — from strategy and creative direction through to execution, analysis, and results.</p>
+          <p className="mt-2 max-w-2xl font-sans text-base text-body/60">Full-funnel campaign delivery, from strategy and creative direction through to execution, analysis, and results.</p>
         </div>
         <div className="grid gap-8 lg:grid-cols-2">
           {strategy.map((s) => <CaseStudyCard key={s.slug} study={s} />)}

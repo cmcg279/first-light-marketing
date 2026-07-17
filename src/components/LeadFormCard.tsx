@@ -286,7 +286,7 @@ export function LeadFormCard() {
   // ══════════════════════════════════════════════════════════════
   return card(
     <>
-      <p className="mb-6 font-serif text-xl font-semibold text-body">Almost there — how can I reach you?</p>
+      <p className="mb-6 font-serif text-xl font-semibold text-body">Almost there. How can I reach you?</p>
       <div className="space-y-4">
         <div>
           <label htmlFor="card-name" className={labelClass}>Name <span className="text-coral">*</span></label>
