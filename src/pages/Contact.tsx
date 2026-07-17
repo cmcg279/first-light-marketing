@@ -1,5 +1,5 @@
 import { HeroSection } from "../components/HeroSection";
-import { ContactForm } from "../components/ContactForm";
+import { LeadForm } from "../components/LeadForm";
 import { CONTACT } from "../content/site";
 
 export default function Contact() {
@@ -10,7 +10,7 @@ export default function Contact() {
       <section className="mx-auto max-w-6xl px-6 py-24">
         <div className="mx-auto grid max-w-3xl gap-12 md:grid-cols-5">
           <div className="md:col-span-3">
-            <ContactForm />
+            <LeadForm />
           </div>
 
           <div className="md:col-span-2">
