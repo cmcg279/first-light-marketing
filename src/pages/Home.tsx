@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ContactForm } from "../components/ContactForm";
+import { LeadFormCard } from "../components/LeadFormCard";
 
 const CLIENT_LOGOS = [
   { src: "logos/clients/kukoon.png", alt: "Kukoon" },
@@ -116,20 +116,20 @@ export default function Home() {
 
       {/* ── Contact form ── */}
       <section className="bg-coral px-6 py-20">
-        <div className="mx-auto max-w-lg">
-          <div className="mb-10 text-center">
-            <p className="font-sans text-xs font-semibold uppercase tracking-[0.2em] text-off-white/60">
-              Get in touch
-            </p>
-            <h2 className="mt-2 font-serif text-3xl font-bold text-off-white md:text-4xl">
-              I&rsquo;m ready when you are
-            </h2>
-            <p className="mx-auto mt-4 max-w-md font-sans text-lg text-off-white/80">
-              Every project starts with a conversation &mdash; no pressure, no
-              obligation.
-            </p>
-          </div>
-          <ContactForm theme="coral" />
+        <div className="mx-auto max-w-lg text-center">
+          <p className="font-sans text-xs font-semibold uppercase tracking-[0.2em] text-off-white/60">
+            Get in touch
+          </p>
+          <h2 className="mt-2 font-serif text-3xl font-bold text-off-white md:text-4xl">
+            I&rsquo;m ready when you are
+          </h2>
+          <p className="mx-auto mt-4 max-w-md font-sans text-lg text-off-white/80">
+            Every project starts with a conversation &mdash; no pressure, no
+            obligation.
+          </p>
+        </div>
+        <div className="mx-auto mt-10">
+          <LeadFormCard />
         </div>
       </section>
     </>
