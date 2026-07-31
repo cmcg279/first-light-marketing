@@ -4,6 +4,11 @@ export interface CaseStudy {
   title: string;
   category: "strategy" | "content";
   summary: string;
+  logo?: string;
+  logoLabel?: string;
+  logos?: { src: string; alt: string }[];
+  highlights?: string[];
+  logoContain?: boolean;
   image?: string;
   imageFit?: "cover" | "contain";
   images?: { src: string; alt: string }[];
@@ -15,178 +20,113 @@ export interface CaseStudy {
 
 export const CASE_STUDIES: CaseStudy[] = [
   {
-    slug: "kukoon-black-friday-2025",
+    slug: "kukoon",
     client: "Kukoon",
-    title: "Black Friday Campaign 2025",
+    title: "Kukoon",
     category: "strategy",
-    summary:
-      "Coordinated a large-scale, multi-channel Black Friday campaign, the biggest day in e-commerce. Full ownership from strategy through to analysis.",
+    summary: "A fast-growing DTC homeware brand.",
+    logo: "logos/work/kukoon-square.png",
+    highlights: [
+      "Led the 2025 Black Friday campaign, generating **£1.8 million in revenue (+289% year-on-year)**.",
+      "Project managed major product launches, including **Kukoon x Caoimhe, Kukoon x Peter Irvine and the Washable Textures collection**.",
+      "Managed paid influencer campaigns with **22 creators**, delivering a **4.31x return on ad spend**.",
+      "Planned and delivered the Kukoon x Peter Irvine launch event.",
+      "Previously led the brand's social media growth, growing Instagram from **11,000 to 80,000 followers** and launching TikTok to **20,000 followers organically**.",
+    ],
     role: [
-      "Strategy & creative ideas",
-      "Social media, emails, paid ads, influencers, in-store print",
-      "Full campaign ownership from start to finish",
-      "Briefing videographers & campaign analysis",
-      "And jumping out of a plane! (Skydive Ireland stunt)",
-    ],
-    results: [
-      { label: "5-day revenue", value: "£1.8M" },
-      { label: "Year-on-year", value: "+289%" },
-      { label: "Website visitors", value: "461.9K" },
-    ],
-    image: "images/work/portfolio/kukoon-black-friday-deal-page.png",
-    images: [
-      {
-        src: "images/work/portfolio/kukoon-black-friday-results.png",
-        alt: "Kukoon Black Friday sales results chart",
-      },
-      {
-        src: "images/work/portfolio/kukoon-black-friday-skydive.jpg",
-        alt: "Skydive Ireland Black Friday campaign content",
-      },
+      "Campaign strategy",
+      "Product launch management",
+      "Influencer marketing",
+      "Event planning",
+      "Social media growth",
     ],
   },
   {
-    slug: "kukoon-influencer-drive",
-    client: "Kukoon",
-    title: "6-Month Influencer Drive",
+    slug: "nearby",
+    client: "Nearby",
+    title: "Nearby",
     category: "strategy",
-    summary:
-      "Introduced a structured influencer framework. Made collaborations consistent, efficient, and commercially focused, halving some initial fees through negotiation.",
-    role: ["Strategy", "Influencer research & outreach", "Price negotiation", "Analysis"],
-    results: [
-      { label: "Total revenue", value: "£911K" },
-      { label: "ROAS", value: "4.31× (target 3×)" },
-      { label: "Creators", value: "22 incl. Terrie McEvoy, Rachel Gorry, Binky Felstead" },
+    summary: "Digital marketing for Northern Ireland's leading convenience retail group.",
+    logo: "logos/work/nearby-square.png",
+    highlights: [
+      "Developed and delivered the brand's digital marketing strategy.",
+      "Launched the first gifted and paid influencer programme to increase local brand awareness.",
+      "Managed Meta advertising campaigns across **100+ store locations** using geo-targeted campaigns.",
+      "Produced email marketing and local content designed to increase store visits and customer engagement.",
     ],
-    metrics: [
-      { label: "Avg order value", value: "£172" },
-      { label: "Avg CPM", value: "£9.64" },
-      { label: "Avg CPC", value: "£0.89" },
-      { label: "Click-through rate", value: "2.51%" },
-    ],
-    image: "images/work/portfolio/kukoon-influencer-results.png",
-    imageFit: "contain",
-    images: [
-      {
-        src: "images/work/portfolio/kukoon-influencer-creator-living-room.png",
-        alt: "Influencer creator content for Kukoon",
-      },
-      {
-        src: "images/work/portfolio/kukoon-influencer-creator-rug.png",
-        alt: "Influencer creator rug content for Kukoon",
-      },
+    role: [
+      "Digital strategy",
+      "Influencer programme development",
+      "Geo-targeted Meta advertising",
+      "Email marketing",
+      "Local content",
     ],
   },
   {
-    slug: "kukoon-product-launch",
-    client: "Kukoon",
-    title: "Product Launches & Always-On",
+    slug: "cancer-council-nsw",
+    client: "Cancer Council NSW",
+    title: "Cancer Council NSW",
     category: "strategy",
-    summary:
-      "Built launch strategies including Kukoon × Caoimhe, one of the biggest launches in company history. Coordinated photoshoot, content, email, paid ads, and PR.",
-    role: ["Launch strategy", "Photoshoot & content planning", "Email & paid ads", "PR"],
-    results: [
-      { label: "First 3 months", value: "£109K revenue" },
-      { label: "First year", value: "£888K revenue" },
-      { label: "Efficiency", value: "All from one content shoot" },
+    summary: "One of Australia's largest not-for-profit organisations.",
+    logo: "logos/work/cancer-council-nsw.png",
+    logoContain: true,
+    highlights: [
+      "Supported the delivery of **multi-million dollar fundraising campaigns**, including Relay For Life, Australia's Biggest Morning Tea and Cancer Research Giving Day.",
+      "Managed email marketing, supporter journeys and campaign communications.",
+      "Helped improve the supporter experience through data-led marketing and CRM activity.",
     ],
-    image: "images/work/portfolio/kukoon-caoimhe-launch.png",
-  },
-  {
-    slug: "kukoon-peter-irvine",
-    client: "Kukoon",
-    title: "Peter Irvine Launch Event",
-    category: "strategy",
-    summary:
-      "Planned and delivered an exclusive in-store launch event, from influencer outreach to event styling, branded materials, and on-the-day management.",
-    testimonial: {
-      quote:
-        "Well done tonight on a wonderful event, well attended and very well executed 👏 Special shoutout to Niamh D for pulling it all together!",
-      author: "Kukoon team",
-    },
-    image: "images/work/portfolio/kukoon-peter-irvine-signage.jpg",
-    images: [
-      {
-        src: "images/work/portfolio/kukoon-peter-irvine-goodie-bags.jpg",
-        alt: "Kukoon Peter Irvine event goodie bags",
-      },
-      {
-        src: "images/work/portfolio/kukoon-peter-irvine-turnout.jpg",
-        alt: "Kukoon Peter Irvine launch event turnout",
-      },
-      {
-        src: "images/work/portfolio/kukoon-peter-irvine-feedback.jpg",
-        alt: "Feedback message for Kukoon Peter Irvine launch event",
-      },
-    ],
-  },
-  {
-    slug: "tranquility-head-spa",
-    client: "Tranquility Head Spa Dungannon",
-    title: "Launch Content for Japanese Head Spa",
-    category: "content",
-    summary:
-      "Short-form promotional videos for a new Japanese Head Spa launch. 90K views, fully booked for over a month within days.",
-    results: [
-      { label: "Views", value: "~90K" },
-      { label: "Impact", value: "Fully booked 1+ month" },
-    ],
-    image: "images/work/portfolio/tranquility-head-spa-analytics.jpg",
-    imageFit: "contain",
-  },
-  {
-    slug: "naturopathic-way",
-    client: "The Naturopathic Way",
-    title: "Wellness Event Content",
-    category: "content",
-    summary:
-      "On-site social content capture. Photos and video so the client could stay present with her guests instead of managing content herself.",
-    testimonial: {
-      quote:
-        "Thanks so much Niamh, the content was great and it was so so nice not having to worry about lifting my phone all day trying to remember about content.",
-      author: "Shaundelle, The Naturopathic Way",
-    },
-    image: "images/work/portfolio/naturopathic-way-stand.jpg",
-    images: [
-      {
-        src: "images/work/portfolio/naturopathic-way-outdoor-session.jpg",
-        alt: "Outdoor wellness event content for The Naturopathic Way",
-      },
-      {
-        src: "images/work/portfolio/naturopathic-way-table-detail.jpg",
-        alt: "Table detail content from The Naturopathic Way event",
-      },
+    role: [
+      "Fundraising campaign support",
+      "Email marketing",
+      "Supporter journeys",
+      "CRM activity",
+      "Campaign communications",
     ],
   },
   {
     slug: "tiktok-content",
-    client: "NI Hospitality",
-    title: "TikTok Content Creation",
+    client: "@niamh.donnellyx",
+    title: "TikTok Content Creation (@niamh.donnellyx)",
     category: "content",
-    summary:
-      "Built a TikTok platform (@niamh.donnellyx) creating engaging content around local cafés, restaurants, and experiences, consistently reaching thousands.",
-    metrics: [
-      { label: "The Coffee Cart, Portadown", value: "45K plays · 1,177 likes · 633 shares" },
-      { label: "Ceili, Carlingford", value: "35K plays · 1,564 likes · 754 shares" },
-      { label: "Feast, Rostrevor", value: "33K plays · 849 likes · 95 shares" },
-      { label: "Primrose Cafe, Portadown", value: "35K plays · 798 likes · 629 shares" },
+    summary: "Building an engaged audience through organic content.",
+    logo: "logos/social/tiktok.png",
+    highlights: [
+      "Grew a local lifestyle TikTok account to **3,500+ followers** through organic content alone. **124k likes, 13.8k shares**",
+      "Created content reaching **3million+ people**, with consistent engagement across lifestyle, travel and local discovery content. Most videos reach **10-50k people**.",
+      "Collaborated with local businesses to increase brand awareness through authentic, community-focused content.",
+      "Built an engaged audience by creating content designed to entertain, inform and inspire action.",
     ],
-    image: "images/work/portfolio/tranquility-head-spa-analytics.jpg",
-    imageFit: "contain",
+    role: [
+      "Organic content creation",
+      "Short-form video",
+      "Local discovery",
+      "Community-led storytelling",
+    ],
   },
   {
     slug: "ugc-brands",
-    client: "30+ Online Brands",
-    title: "UGC for Online Brands",
+    client: "30+ online brands",
+    title: "User-Generated Content (UGC)",
     category: "content",
-    summary:
-      "Partnered with 30+ brands to create authentic UGC: product demos, testimonials, unboxings, and lifestyle content across skincare, travel, software, and experiences.",
-    results: [
-      {
-        label: "Notable brands",
-        value:
-          "111SKIN, Roamless, World of Books, Sculpted by Aimee, Saily, Travelzoo, and 12+ more",
-      },
+    summary: "Helping brands tell better stories through creator-led content.",
+    logos: [
+      { src: "logos/clients/saily.png", alt: "Saily" },
+      { src: "logos/clients/by-babes.png", alt: "ByBabes" },
+      { src: "logos/clients/nibbed.png", alt: "Nibbed" },
+      { src: "logos/clients/pharma-plus.png", alt: "Pharma Plus" },
+    ],
+    highlights: [
+      "Partnered with **30+ brands** to create scroll-stopping UGC for paid advertising, social media and website listings. Some brands include **Saily, Cornish Seaweed Bath Company, By Babes, Peak Tax, Nibbed, Pharma Plus**.",
+      "Developed concepts, scripts and video content designed to increase engagement and conversions.",
+      "Produced content across multiple industries including beauty, travel, fashion, home and wellness.",
+      "Experienced creating content that balances authentic storytelling with commercial performance.",
+    ],
+    role: [
+      "UGC strategy",
+      "Concept development",
+      "Script writing",
+      "Product demos",
+      "Lifestyle content",
     ],
   },
 ];

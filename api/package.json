@@ -1,0 +1,20 @@
+{
+  "name": "first-light-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.650.0",
+    "@aws-sdk/client-s3": "^3.1089.0",
+    "@aws-sdk/client-secrets-manager": "^3.1093.0",
+    "@aws-sdk/client-ses": "^3.650.0",
+    "@aws-sdk/lib-dynamodb": "^3.650.0",
+    "@aws-sdk/s3-request-presigner": "^3.1089.0",
+    "fast-xml-parser": "^5.10.1"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.143",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}

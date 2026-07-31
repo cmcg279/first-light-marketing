@@ -1,6 +1,6 @@
 export const BRAND = {
   name: "First Light Marketing",
-  tagline: "Marketing that moves your business forward.",
+  tagline: "Bringing clarity to your marketing.",
 } as const;
 
 export const CONTACT = {
@@ -11,5 +11,6 @@ export const CONTACT = {
 export const NAV = [
   { label: "About", href: "/about" },
   { label: "Services", href: "/services" },
+  { label: "Work", href: "/work" },
   { label: "Contact", href: "/contact" },
 ] as const;

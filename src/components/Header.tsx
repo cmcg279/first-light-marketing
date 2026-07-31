@@ -1,24 +1,45 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { BRAND, NAV } from "../content/site";
+import { getPublicContent } from "../lib/adminApi";
 
 export function Header() {
   const [open, setOpen] = useState(false);
+  const [blogEnabled, setBlogEnabled] = useState(false);
   const { pathname } = useLocation();
+  const navItems = blogEnabled
+    ? [...NAV.slice(0, 3), { label: "Blog", href: "/blog" }, ...NAV.slice(3)]
+    : NAV;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    getPublicContent()
+      .then((content) => {
+        if (!cancelled) setBlogEnabled(Boolean(content.settings.blogEnabled));
+      })
+      .catch(() => {
+        if (!cancelled) setBlogEnabled(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <header className="sticky top-0 z-50 border-b border-body/10 bg-cream/90 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <Link to="/" className="group" onClick={() => setOpen(false)}>
           <img
-            src="logos/6-cropped.png"
+            src="logos/6-transparent-thick.png"
             alt="First Light Marketing"
             className="h-8 w-auto"
           />
         </Link>
 
         <nav className="hidden items-center gap-8 md:flex">
-          {NAV.map((l) => (
+          {navItems.map((l) => (
             <Link
               key={l.href}
               to={l.href}
@@ -43,7 +64,7 @@ export function Header() {
 
       {open && (
         <nav className="border-t border-body/10 bg-cream px-6 pb-6 pt-4 md:hidden flex flex-col gap-4">
-          {NAV.map((l) => (
+          {navItems.map((l) => (
             <Link
               key={l.href}
               to={l.href}

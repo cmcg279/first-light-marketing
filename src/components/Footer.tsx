@@ -39,8 +39,15 @@ export function Footer() {
           </div>
         </div>
       </div>
-      <div className="border-t border-cream/10 px-6 py-4 text-center">
-        <p className="font-sans text-xs text-cream/60">&copy; {new Date().getFullYear()} {BRAND.name}. All rights reserved.</p>
+      <div className="border-t border-cream/10 px-6 py-4">
+        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 text-center md:flex-row md:text-left">
+          <p className="font-sans text-xs text-cream/60">&copy; {new Date().getFullYear()} {BRAND.name}. All rights reserved.</p>
+          <nav className="flex flex-wrap justify-center gap-x-4 gap-y-2">
+            <Link to="/privacy" className="font-sans text-xs text-cream/60 transition-colors hover:text-cream">Privacy Policy</Link>
+            <Link to="/cookies" className="font-sans text-xs text-cream/60 transition-colors hover:text-cream">Cookie Policy</Link>
+            <Link to="/terms" className="font-sans text-xs text-cream/60 transition-colors hover:text-cream">Terms</Link>
+          </nav>
+        </div>
       </div>
     </footer>
   );

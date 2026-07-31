@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { CONTACT } from "../content/site";
-import { TIKTOK_CONTENT_PILLARS, TIKTOK_HIGHLIGHTS } from "../content/tiktok";
 
 type TikTokWindow = Window & {
   tiktokEmbed?: {
@@ -10,25 +9,48 @@ type TikTokWindow = Window & {
 
 export function TikTokWall() {
   useEffect(() => {
-    const existing = document.getElementById("tiktok-embed-script");
     const tiktokWindow = window as TikTokWindow;
+    let retryTimer: number | undefined;
 
-    if (existing) {
-      tiktokWindow.tiktokEmbed?.load();
-      return;
+    const loadTikTokEmbeds = () => {
+      if (typeof tiktokWindow.tiktokEmbed?.load === "function") {
+        tiktokWindow.tiktokEmbed.load();
+        return true;
+      }
+
+      return false;
+    };
+
+    const injectScript = () => {
+      document.getElementById("tiktok-embed-script")?.remove();
+
+      const script = document.createElement("script");
+      script.id = "tiktok-embed-script";
+      script.src = "https://www.tiktok.com/embed.js";
+      script.async = true;
+      script.onload = () => loadTikTokEmbeds();
+      document.body.appendChild(script);
+    };
+
+    if (!loadTikTokEmbeds()) {
+      injectScript();
     }
 
-    const script = document.createElement("script");
-    script.id = "tiktok-embed-script";
-    script.src = "https://www.tiktok.com/embed.js";
-    script.async = true;
-    document.body.appendChild(script);
+    retryTimer = window.setTimeout(() => {
+      if (!loadTikTokEmbeds()) {
+        injectScript();
+      }
+    }, 500);
+
+    return () => {
+      window.clearTimeout(retryTimer);
+    };
   }, []);
 
   return (
     <section className="bg-off-white px-6 py-20">
       <div className="mx-auto max-w-6xl">
-        <div className="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-end">
+        <div className="grid gap-10 lg:grid-cols-[0.85fr_1.15fr] lg:items-center">
           <div>
             <p className="font-sans text-xs font-semibold uppercase tracking-[0.22em] text-coral">
               TikTok proof
@@ -41,67 +63,6 @@ export function TikTokWall() {
               how strong hooks and useful storytelling can drive visits,
               bookings and brand awareness.
             </p>
-
-            <div className="mt-7 flex flex-wrap gap-2">
-              {TIKTOK_CONTENT_PILLARS.map((pillar) => (
-                <span
-                  key={pillar}
-                  className="rounded-full border border-body/10 bg-white px-4 py-2 font-sans text-sm font-medium text-body/65"
-                >
-                  {pillar}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            {TIKTOK_HIGHLIGHTS.map((item) => (
-              <a
-                key={item.title}
-                href={CONTACT.tiktok.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="group rounded-lg border border-body/10 bg-cream p-5 transition-all hover:-translate-y-1 hover:border-coral/40 hover:shadow-lg"
-              >
-                <p className="font-sans text-xs font-semibold uppercase tracking-[0.18em] text-body/45">
-                  {item.title}
-                </p>
-                <p className="mt-4 font-serif text-3xl font-bold text-coral">
-                  {item.metric}
-                </p>
-                <p className="mt-2 font-sans text-sm text-body/60">{item.detail}</p>
-                <p className="mt-5 font-sans text-xs font-semibold uppercase tracking-[0.18em] text-body/45 transition-colors group-hover:text-coral">
-                  View on TikTok
-                </p>
-              </a>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-12 grid gap-8 lg:grid-cols-[minmax(0,420px)_1fr] lg:items-stretch">
-          <div className="rounded-lg border border-body/10 bg-body p-6 text-off-white">
-            <div className="flex items-center gap-4">
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-coral font-serif text-2xl font-bold">
-                N
-              </div>
-              <div>
-                <p className="font-sans text-sm text-off-white/55">Follow along</p>
-                <a
-                  href={CONTACT.tiktok.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-sans text-lg font-semibold text-off-white transition-colors hover:text-coral"
-                >
-                  {CONTACT.tiktok.handle}
-                </a>
-              </div>
-            </div>
-
-            <p className="mt-6 font-sans text-base leading-relaxed text-off-white/70">
-              A live channel for local recommendations, launch stories and the
-              kind of short-form content brands need to show up consistently.
-            </p>
-
             <a
               href={CONTACT.tiktok.url}
               target="_blank"

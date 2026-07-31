@@ -11,6 +11,7 @@ interface LeadSubmission {
   budgetRange: string;
   name: string;
   email: string;
+  phone?: string;
   business?: string;
   comments?: string;
 }
@@ -56,6 +57,7 @@ export function LeadForm() {
   // Step 2 state
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [business, setBusiness] = useState("");
   const [comments, setComments] = useState("");
 
@@ -72,6 +74,7 @@ export function LeadForm() {
       budgetRange,
       name: name.trim(),
       email: email.trim(),
+      phone: phone.trim() || undefined,
       business: business.trim() || undefined,
       comments: comments.trim() || undefined,
     };
@@ -301,6 +304,20 @@ export function LeadForm() {
             onChange={(e) => setEmail(e.target.value)}
             className={inputClass}
             placeholder="you@example.com"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="lead-phone" className={labelClass}>
+            Phone number
+          </label>
+          <input
+            id="lead-phone"
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            className={inputClass}
+            placeholder="Optional"
           />
         </div>
 

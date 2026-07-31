@@ -1,5 +1,7 @@
 import { useState, FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { CONTACT } from "../content/site";
+import { submitContactLead } from "../lib/contactApi";
 
 export function ContactForm({ theme }: { theme?: "cream" | "coral" }) {
   const isCoral = theme === "coral";
@@ -12,19 +14,14 @@ export function ContactForm({ theme }: { theme?: "cream" | "coral" }) {
     setStatus("sending");
 
     try {
-      const apiUrl = import.meta.env.VITE_API_URL;
-      if (!apiUrl) throw new Error("API URL not configured");
-
-      const res = await fetch(apiUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: form.name.trim(), email: form.email.trim(), message: form.message.trim() }),
+      await submitContactLead({
+        servicesNeeded: ["General enquiry"],
+        challenge: "General enquiry",
+        budgetRange: "Not provided",
+        name: form.name.trim(),
+        email: form.email.trim(),
+        comments: form.message.trim(),
       });
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || "Something went wrong");
-      }
 
       setStatus("success");
       setForm({ name: "", email: "", message: "" });
@@ -75,6 +72,14 @@ export function ContactForm({ theme }: { theme?: "cream" | "coral" }) {
           </p>
         </div>
       )}
+
+      <p className={`font-sans text-xs leading-relaxed ${isCoral ? "text-off-white/65" : "text-body/45"}`}>
+        By submitting this form, you agree that First Light Marketing can use
+        your details to respond to your enquiry. See the{" "}
+        <Link to="/privacy" className={`font-medium underline underline-offset-2 ${isCoral ? "text-off-white" : "text-coral"}`}>
+          Privacy Policy
+        </Link>.
+      </p>
 
       <button type="submit" disabled={status === "sending"} className={`w-full rounded-full px-6 py-3.5 font-sans text-base font-semibold uppercase tracking-wider transition-all disabled:opacity-50 ${
         isCoral

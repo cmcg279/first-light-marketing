@@ -48,3 +48,80 @@
   0%, 100% { opacity: 0.4; }
   50% { opacity: 0.7; }
 }
+
+@keyframes brand-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@layer components {
+  .brand-marquee {
+    animation: brand-marquee 34s linear infinite;
+  }
+
+  .brand-marquee:hover {
+    animation-play-state: paused;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .brand-marquee {
+      animation: none;
+      flex-wrap: wrap;
+      justify-content: center;
+      width: auto;
+    }
+  }
+
+  .substack-post-content h2 {
+    @apply mt-10 font-serif text-3xl font-bold leading-tight text-body;
+  }
+
+  .substack-post-content h3 {
+    @apply mt-8 font-serif text-2xl font-bold leading-tight text-body;
+  }
+
+  .substack-post-content p {
+    @apply text-body/75;
+  }
+
+  .substack-post-content a {
+    @apply text-coral underline underline-offset-4;
+  }
+
+  .substack-post-content img {
+    @apply my-8 w-full rounded-lg border border-body/10 bg-white object-cover;
+  }
+
+  .substack-post-content blockquote {
+    @apply border-l-4 border-coral/40 pl-5 font-serif text-2xl leading-relaxed text-body;
+  }
+
+  .substack-post-content ul,
+  .substack-post-content ol {
+    @apply space-y-2 pl-6;
+  }
+
+  .substack-post-content ul {
+    @apply list-disc;
+  }
+
+  .substack-post-content ol {
+    @apply list-decimal;
+  }
+
+  .legal-content h2 {
+    @apply mt-9 font-serif text-2xl font-bold leading-tight text-body first:mt-0;
+  }
+
+  .legal-content p {
+    @apply mt-4 font-sans text-base leading-relaxed text-body/70;
+  }
+
+  .legal-content ul {
+    @apply mt-4 list-disc space-y-2 pl-6 font-sans text-base leading-relaxed text-body/70;
+  }
+
+  .legal-content a {
+    @apply font-medium text-coral underline underline-offset-4;
+  }
+}

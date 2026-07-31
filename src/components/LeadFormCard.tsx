@@ -1,5 +1,8 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
+import { markLeadSubmitted } from "./ExitIntentPrompt";
 import { SERVICES } from "../content/services";
+import { submitContactLead } from "../lib/contactApi";
 
 interface LeadSubmission {
   servicesNeeded: string[];
@@ -8,6 +11,7 @@ interface LeadSubmission {
   budgetRange: string;
   name: string;
   email: string;
+  phone?: string;
   business?: string;
   comments?: string;
 }
@@ -39,6 +43,7 @@ export function LeadFormCard() {
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
 
   const [servicesNeeded, setServicesNeeded] = useState<string[]>([]);
   const [challenge, setChallenge] = useState("");
@@ -46,6 +51,7 @@ export function LeadFormCard() {
   const [budgetRange, setBudgetRange] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [business, setBusiness] = useState("");
   const [comments, setComments] = useState("");
 
@@ -65,8 +71,9 @@ export function LeadFormCard() {
     if (step > 0) setStep(step - 1);
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     setSubmitting(true);
+    setErrorMsg("");
     const data: LeadSubmission = {
       servicesNeeded,
       challenge,
@@ -74,15 +81,20 @@ export function LeadFormCard() {
       budgetRange,
       name: name.trim(),
       email: email.trim(),
+      phone: phone.trim() || undefined,
       business: business.trim() || undefined,
       comments: comments.trim() || undefined,
     };
-    // TODO: wire to backend once the lead-capture Lambda/DynamoDB schema is extended
-    console.log("Lead submission:", data);
-    setTimeout(() => {
-      setSubmitting(false);
+
+    try {
+      await submitContactLead(data);
       setDone(true);
-    }, 600);
+      markLeadSubmitted();
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : "Something went wrong. Please email Niamh directly.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   // ── Success ──
@@ -138,18 +150,25 @@ export function LeadFormCard() {
       );
     }
     return (
-      <div className="mt-8 flex gap-3">
-        <button onClick={prev} className="rounded-full border-2 border-body/15 px-5 py-3 font-sans text-sm font-semibold uppercase tracking-wider text-body/50 transition-all hover:border-body/30 hover:text-body">
-          Back
-        </button>
-        <button
-          onClick={handleSubmit}
-          disabled={submitting || !name.trim() || !email.trim()}
-          className="flex-1 rounded-full bg-coral px-6 py-3 font-sans text-sm font-semibold uppercase tracking-wider text-off-white transition-all hover:bg-coral-700 hover:shadow-lg disabled:opacity-40"
-        >
-          {submitting ? "Sending..." : "Send"}
-        </button>
-      </div>
+      <>
+        {errorMsg && (
+          <div className="mt-6 rounded-xl border border-coral/30 bg-coral/[0.05] px-4 py-3">
+            <p className="font-sans text-sm text-coral">{errorMsg}</p>
+          </div>
+        )}
+        <div className="mt-8 flex gap-3">
+          <button onClick={prev} className="rounded-full border-2 border-body/15 px-5 py-3 font-sans text-sm font-semibold uppercase tracking-wider text-body/50 transition-all hover:border-body/30 hover:text-body">
+            Back
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={submitting || !name.trim() || !email.trim()}
+            className="flex-1 rounded-full bg-coral px-6 py-3 font-sans text-sm font-semibold uppercase tracking-wider text-off-white transition-all hover:bg-coral-700 hover:shadow-lg disabled:opacity-40"
+          >
+            {submitting ? "Sending..." : "Send"}
+          </button>
+        </div>
+      </>
     );
   }
 
@@ -297,6 +316,10 @@ export function LeadFormCard() {
           <input id="card-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} placeholder="you@example.com" />
         </div>
         <div>
+          <label htmlFor="card-phone" className={labelClass}>Phone number</label>
+          <input id="card-phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputClass} placeholder="Optional" />
+        </div>
+        <div>
           <label htmlFor="card-business" className={labelClass}>Business name</label>
           <input id="card-business" type="text" value={business} onChange={(e) => setBusiness(e.target.value)} className={inputClass} placeholder="Optional" />
         </div>
@@ -305,6 +328,13 @@ export function LeadFormCard() {
           <textarea id="card-comments" rows={3} value={comments} onChange={(e) => setComments(e.target.value)} className={`${inputClass} resize-y`} placeholder="Anything else?" />
         </div>
       </div>
+      <p className="mt-5 font-sans text-xs leading-relaxed text-body/45">
+        By submitting this form, you agree that First Light Marketing can use
+        your details to respond to your enquiry. See the{" "}
+        <Link to="/privacy" className="font-medium text-coral underline underline-offset-2">
+          Privacy Policy
+        </Link>.
+      </p>
       <Footer />
     </>
   );

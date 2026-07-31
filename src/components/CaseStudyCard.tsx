@@ -1,85 +1,94 @@
 import type { CaseStudy } from "../content/work";
 
-export function CaseStudyCard({ study }: { study: CaseStudy }) {
+export function CaseStudyCard({
+  study,
+}: {
+  study: CaseStudy;
+}) {
   return (
-    <article className="group relative overflow-hidden rounded-2xl border border-body/10 bg-white/60 transition-all hover:border-coral/30 hover:shadow-lg">
-      {/* Image */}
-      {study.image && (
-        <div className="aspect-[16/10] overflow-hidden bg-white">
-          <img
-            src={study.image}
-            alt={study.title}
-            className={`h-full w-full transition-transform duration-500 group-hover:scale-105 ${
-              study.imageFit === "contain" ? "object-contain p-4" : "object-cover"
-            }`}
-          />
+    <article className="group grid gap-5 border-t border-body/15 py-8 transition-colors hover:border-coral md:grid-cols-[260px_1fr] md:items-center md:gap-12 md:py-12">
+      <div className="flex items-center gap-4 md:block">
+        <LogoBlock study={study} />
+        <div className="min-w-0 md:hidden">
+          <h3 className="font-serif text-2xl font-bold leading-tight text-coral">
+            {study.title}
+          </h3>
+          <p className="mt-2 font-sans text-sm italic leading-relaxed text-body/70">
+            {study.summary}
+          </p>
         </div>
-      )}
+      </div>
 
-      {/* Hover illumination */}
-      <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-coral/5 opacity-0 blur-3xl transition-opacity group-hover:opacity-100" />
-
-      <div className="relative p-8">
-        <div className="mb-1 flex items-center gap-3">
-          <span className="rounded-full bg-coral/10 px-3 py-1 font-sans text-xs font-semibold uppercase tracking-wider text-coral">
-            {study.category === "strategy" ? "Campaign" : "Content"}
-          </span>
-          <span className="font-sans text-sm font-medium text-body/50">{study.client}</span>
+      <div className="flex flex-col items-start">
+        <div className="hidden md:block">
+          <h3 className="font-serif text-3xl font-bold leading-tight text-coral">
+            {study.title}
+          </h3>
+          <p className="mt-4 font-sans text-base italic leading-relaxed text-body/70">
+            {study.summary}
+          </p>
         </div>
 
-        <h3 className="font-serif text-xl font-semibold text-body md:text-2xl">{study.title}</h3>
-        <p className="mt-3 font-sans text-base leading-relaxed text-body/60">{study.summary}</p>
-
-        {study.results && study.results.length > 0 && (
-          <div className="mt-6 grid gap-3 sm:grid-cols-2">
-            {study.results.slice(0, 4).map((r) => (
-              <div key={r.label} className="rounded-xl bg-coral/5 px-4 py-3">
-                <p className="font-serif text-2xl font-bold text-coral">{r.value}</p>
-                <p className="mt-1 font-sans text-xs font-medium text-body/50">{r.label}</p>
-              </div>
+        {study.highlights && study.highlights.length > 0 && (
+          <ul className="space-y-2 md:mt-5">
+            {study.highlights.map((highlight) => (
+              <li key={highlight} className="flex gap-3 font-sans text-sm leading-relaxed text-body/65">
+                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-coral" />
+                <span>{renderEmphasis(highlight)}</span>
+              </li>
             ))}
-          </div>
-        )}
-
-        {study.metrics && study.metrics.length > 0 && (
-          <div className="mt-6 overflow-hidden rounded-xl border border-body/5">
-            <table className="w-full text-left">
-              <tbody>
-                {study.metrics.map((m, i) => (
-                  <tr key={m.label} className={i % 2 === 0 ? "bg-body/[0.02]" : ""}>
-                    <td className="px-4 py-2.5 font-sans text-sm text-body/60">{m.label}</td>
-                    <td className="px-4 py-2.5 font-sans text-sm font-semibold text-body/80">{m.value}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {study.testimonial && (
-          <blockquote className="mt-6 rounded-xl border-l-2 border-coral bg-coral/[0.03] px-4 py-4">
-            <p className="font-sans text-sm leading-relaxed text-body/70 italic">&ldquo;{study.testimonial.quote}&rdquo;</p>
-            <footer className="mt-2 font-sans text-xs font-medium text-coral">{study.testimonial.author}</footer>
-          </blockquote>
-        )}
-
-        {study.images && study.images.length > 0 && (
-          <div className="mt-6 grid gap-3 sm:grid-cols-2">
-            {study.images.map((image) => (
-              <div
-                key={image.src}
-                className="overflow-hidden rounded-xl border border-body/10 bg-white"
-              >
-                <img
-                  src={image.src}
-                  alt={image.alt}
-                  className="h-44 w-full object-contain p-2 transition-transform duration-500 group-hover:scale-105"
-                />
-              </div>
-            ))}
-          </div>
+          </ul>
         )}
       </div>
     </article>
   );
+}
+
+function LogoBlock({ study }: { study: CaseStudy }) {
+  return (
+    <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-off-white/80 ring-1 ring-white/70 md:aspect-square md:h-auto md:w-full">
+      {study.logos ? (
+        <div className="grid grid-cols-2 items-center justify-items-center gap-2 p-3 md:gap-5 md:p-7">
+          {study.logos.map((logo) => (
+            <img
+              key={logo.alt}
+              src={logo.src}
+              alt={logo.alt}
+              className="max-h-5 w-auto max-w-8 object-contain md:max-h-9 md:max-w-[100px]"
+            />
+          ))}
+        </div>
+      ) : study.logo ? (
+        <img
+          src={study.logo}
+          alt={study.client}
+          className={`h-full w-full rounded-md object-contain mix-blend-multiply ${
+            study.logoContain ? "p-3 md:p-6" : "p-2 md:p-4"
+          }`}
+        />
+      ) : study.logoLabel ? (
+        <span className="text-center font-serif text-lg font-semibold leading-tight text-coral md:text-3xl">
+          {study.logoLabel}
+        </span>
+      ) : (
+        <span className="font-serif text-base font-semibold text-coral md:text-2xl">
+          First Light
+        </span>
+      )}
+    </div>
+  );
+}
+
+function renderEmphasis(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return (
+        <strong key={part} className="font-semibold text-body">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+
+    return part;
+  });
 }
