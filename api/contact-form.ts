@@ -144,34 +144,38 @@ export async function handler(event: LambdaFunctionUrlEvent) {
       }),
     );
 
-    let emailSent = true;
-    try {
-      const template = await getContactEmailTemplate();
-      const variables = emailVariables(lead, now);
-      const subject = renderTemplate(template.subject, variables);
-      const textBody = renderTemplate(template.body, variables);
+    let emailSent = false;
+    if (process.env.EMAIL_ENABLED === "false") {
+      console.info("Contact email is disabled for this stage. The lead was saved.");
+    } else {
+      try {
+        const template = await getContactEmailTemplate();
+        const variables = emailVariables(lead, now);
+        const subject = renderTemplate(template.subject, variables);
+        const textBody = renderTemplate(template.body, variables);
 
-      await ses.send(
-        new SendEmailCommand({
-          Source: process.env.RECIPIENT_EMAIL!,
-          Destination: { ToAddresses: [process.env.RECIPIENT_EMAIL!] },
-          ReplyToAddresses: [lead.email],
-          Message: {
-            Subject: { Data: subject },
-            Body: {
-              Text: {
-                Data: textBody,
-              },
-              Html: {
-                Data: formatBrandedEmailHtml(subject, textBody, variables),
+        await ses.send(
+          new SendEmailCommand({
+            Source: process.env.RECIPIENT_EMAIL!,
+            Destination: { ToAddresses: [process.env.RECIPIENT_EMAIL!] },
+            ReplyToAddresses: [lead.email],
+            Message: {
+              Subject: { Data: subject },
+              Body: {
+                Text: {
+                  Data: textBody,
+                },
+                Html: {
+                  Data: formatBrandedEmailHtml(subject, textBody, variables),
+                },
               },
             },
-          },
-        }),
-      );
-    } catch (emailError) {
-      emailSent = false;
-      console.error("Lead saved but email failed:", emailError);
+          }),
+        );
+        emailSent = true;
+      } catch (emailError) {
+        console.error("Lead saved but email failed:", emailError);
+      }
     }
 
     return {
@@ -302,7 +306,7 @@ function cors() {
     "Access-Control-Allow-Origin": allowedOrigins[0] || "https://firstlightmarketing.co.uk",
     "Vary": "Origin",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Accept",
+    "Access-Control-Allow-Headers": "Content-Type, Accept, x-amz-content-sha256",
     "Content-Type": "application/json",
   };
 }

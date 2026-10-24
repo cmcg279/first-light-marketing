@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shlex
@@ -320,12 +321,13 @@ def api_request(
 ) -> dict[str, Any]:
     body = None
     headers = {
-        "Authorization": f"Bearer {config.runner_token}",
+        "X-First-Light-Authorization": f"Bearer {config.runner_token}",
         "Accept": "application/json",
     }
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
+        headers["x-amz-content-sha256"] = hashlib.sha256(body).hexdigest()
 
     request = urllib.request.Request(
         f"{config.api_url}{path}",

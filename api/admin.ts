@@ -1,7 +1,8 @@
-import { createHmac, randomUUID, timingSafeEqual } from "crypto";
+import { randomUUID, timingSafeEqual } from "crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { PutSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
+import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import {
   DeleteCommand,
   DynamoDBDocumentClient,
@@ -16,6 +17,8 @@ import { XMLParser } from "fast-xml-parser";
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
 const secrets = new SecretsManagerClient({});
+const ssm = new SSMClient({});
+let cachedCognitoClientId: string | undefined;
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -23,7 +26,11 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
 const cognitoIssuer = process.env.COGNITO_USER_POOL_ID
   ? `https://cognito-idp.${process.env.AWS_REGION}.amazonaws.com/${process.env.COGNITO_USER_POOL_ID}`
   : "";
-let jwksCache: { keys: JsonWebKey[]; expiresAt: number } | undefined;
+interface CognitoJwk extends JsonWebKey {
+  kid?: string;
+}
+
+let jwksCache: { keys: CognitoJwk[]; expiresAt: number } | undefined;
 const rssParser = new XMLParser({
   attributeNamePrefix: "",
   ignoreAttributes: false,
@@ -337,11 +344,12 @@ export async function handler(event: LambdaFunctionUrlEvent) {
     }
 
     if (method === "GET" && path === "/api/auth/config") {
+      const browserOrigin = resolveBrowserOrigin(event);
       return response(200, {
         cognitoDomain: process.env.COGNITO_DOMAIN || "",
-        clientId: process.env.COGNITO_CLIENT_ID || "",
-        redirectUri: process.env.COGNITO_REDIRECT_URI || "",
-        logoutUri: process.env.COGNITO_LOGOUT_URI || "",
+        clientId: await getExpectedClientId(),
+        redirectUri: browserOrigin ? `${browserOrigin}/admin` : process.env.COGNITO_REDIRECT_URI || "",
+        logoutUri: browserOrigin ? `${browserOrigin}/admin` : process.env.COGNITO_LOGOUT_URI || "",
       });
     }
 
@@ -368,10 +376,6 @@ export async function handler(event: LambdaFunctionUrlEvent) {
     if (method === "POST" && path === "/api/runner/audit/reports/fail") {
       requireRunnerAuth(event);
       return failAuditReport(event.body);
-    }
-
-    if (method === "POST" && path === "/api/admin/login") {
-      return login(event.body);
     }
 
     if (path === "/api/admin/leads" && method === "GET") {
@@ -473,22 +477,6 @@ export async function handler(event: LambdaFunctionUrlEvent) {
     console.error("Admin API error:", error);
     return response(500, { error: "Something went wrong." });
   }
-}
-
-async function login(rawBody?: string) {
-  const body = parseJson(rawBody);
-  const password = typeof body.password === "string" ? body.password : "";
-
-  if (!constantTimeEqual(password, process.env.ADMIN_PASSWORD || "")) {
-    return response(401, { error: "Incorrect password." });
-  }
-
-  return response(200, {
-    token: signToken({
-      sub: "first-light-admin",
-      exp: Math.floor(Date.now() / 1000) + 60 * 60 * 12,
-    }),
-  });
 }
 
 async function listLeads() {
@@ -1615,17 +1603,7 @@ function normalizeOptionalUrl(value: unknown, label: string) {
 }
 
 async function requireAuth(event: LambdaFunctionUrlEvent) {
-  const authHeader =
-    event.headers?.authorization ||
-    event.headers?.Authorization ||
-    "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-
-  const valid = cognitoIssuer
-    ? await verifyCognitoToken(token)
-    : verifyToken(token);
-
-  if (!valid) {
+  if (!cognitoIssuer || !(await verifyCognitoToken(bearerToken(event)))) {
     throw new AuthError(401, "Please log in again.");
   }
 }
@@ -1636,21 +1614,60 @@ function requireRunnerAuth(event: LambdaFunctionUrlEvent) {
     throw new AuthError(503, "Audit runner access is not configured.");
   }
 
-  const authHeader =
-    event.headers?.authorization ||
-    event.headers?.Authorization ||
-    "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-
-  if (!constantTimeEqual(token, expectedToken)) {
+  if (!constantTimeEqual(bearerToken(event), expectedToken)) {
     throw new AuthError(401, "Audit runner token is invalid.");
   }
+}
+
+function bearerToken(event: LambdaFunctionUrlEvent) {
+  const headers = event.headers || {};
+  const raw =
+    headerValue(headers, "x-first-light-authorization") ||
+    headerValue(headers, "authorization");
+  if (!raw || raw.startsWith("AWS4-HMAC-SHA256 ")) return "";
+  return raw.startsWith("Bearer ") ? raw.slice(7).trim() : "";
+}
+
+function headerValue(headers: Record<string, string | undefined>, name: string) {
+  const target = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === target && value) return value.trim();
+  }
+  return "";
+}
+
+function resolveBrowserOrigin(event: LambdaFunctionUrlEvent) {
+  if (process.env.ALLOW_VIEWER_ORIGIN !== "true") return "";
+  const headers = event.headers || {};
+  const origin = headerValue(headers, "origin");
+  if (origin && isPermittedBrowserOrigin(origin)) return new URL(origin).origin;
+  const host = headerValue(headers, "x-viewer-host").split(",")[0]?.trim() || "";
+  const fromHost = host ? `https://${host}` : "";
+  if (fromHost && isPermittedBrowserOrigin(fromHost)) return new URL(fromHost).origin;
+  return "";
+}
+
+function isPermittedBrowserOrigin(value: string) {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.username || url.password || (url.pathname !== "/" && url.pathname !== "")) return false;
+  if (allowedOrigins.includes(url.origin)) return true;
+  return (
+    url.protocol === "https:" &&
+    url.port === "" &&
+    url.hostname.endsWith(".cloudfront.net") &&
+    url.hostname !== "cloudfront.net"
+  );
 }
 
 async function verifyCognitoToken(token: string) {
   const [headerRaw, payloadRaw, signatureRaw] = token.split(".");
 
-  if (!headerRaw || !payloadRaw || !signatureRaw || !cognitoIssuer || !process.env.COGNITO_CLIENT_ID) {
+  if (!headerRaw || !payloadRaw || !signatureRaw || !cognitoIssuer) {
     return false;
   }
 
@@ -1676,7 +1693,8 @@ async function verifyCognitoToken(token: string) {
     }
 
     const tokenClientId = payload.client_id || payload.aud;
-    if (tokenClientId !== process.env.COGNITO_CLIENT_ID) {
+    const expectedClientId = await getExpectedClientId();
+    if (!expectedClientId || tokenClientId !== expectedClientId) {
       return false;
     }
 
@@ -1715,7 +1733,7 @@ async function getJwks() {
     throw new AuthError(503, "Could not verify login session.");
   }
 
-  const body = (await response.json()) as { keys?: JsonWebKey[] };
+  const body = (await response.json()) as { keys?: CognitoJwk[] };
   jwksCache = {
     keys: body.keys || [],
     expiresAt: now + 60 * 60 * 1000,
@@ -1724,34 +1742,26 @@ async function getJwks() {
   return jwksCache.keys;
 }
 
-function base64UrlDecode(value: string) {
-  return Buffer.from(value, "base64url");
-}
+async function getExpectedClientId() {
+  const fromEnv = process.env.COGNITO_CLIENT_ID || "";
+  if (fromEnv) return fromEnv;
+  if (cachedCognitoClientId !== undefined) return cachedCognitoClientId;
 
-function signToken(payload: Record<string, unknown>) {
-  const encoded = toBase64Url(JSON.stringify(payload));
-  const signature = hmac(encoded);
-  return `${encoded}.${signature}`;
-}
-
-function verifyToken(token: string) {
-  const [encoded, signature] = token.split(".");
-  if (!encoded || !signature || !constantTimeEqual(signature, hmac(encoded))) {
-    return false;
-  }
+  const parameterName = process.env.COGNITO_CLIENT_ID_PARAMETER || "";
+  if (!parameterName) return "";
 
   try {
-    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
-    return typeof payload.exp === "number" && payload.exp > Math.floor(Date.now() / 1000);
-  } catch {
-    return false;
+    const result = await ssm.send(new GetParameterCommand({ Name: parameterName }));
+    cachedCognitoClientId = result.Parameter?.Value || "";
+    return cachedCognitoClientId;
+  } catch (error) {
+    console.error("Could not read Cognito client id:", error);
+    return "";
   }
 }
 
-function hmac(value: string) {
-  return createHmac("sha256", process.env.ADMIN_SESSION_SECRET || "")
-    .update(value)
-    .digest("base64url");
+function base64UrlDecode(value: string) {
+  return Buffer.from(value, "base64url");
 }
 
 function constantTimeEqual(a: string, b: string) {
@@ -1778,10 +1788,6 @@ function normalizePath(path: string) {
   return withoutTrailingSlash || "/";
 }
 
-function toBase64Url(value: string) {
-  return Buffer.from(value, "utf8").toString("base64url");
-}
-
 function response(statusCode: number, body: unknown) {
   return {
     statusCode,
@@ -1795,7 +1801,7 @@ function cors() {
     "Access-Control-Allow-Origin": allowedOrigins[0] || "https://firstlightmarketing.co.uk",
     "Vary": "Origin",
     "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+    "Access-Control-Allow-Headers": "Content-Type, Accept, X-First-Light-Authorization, x-amz-content-sha256",
     "Content-Type": "application/json",
   };
 }

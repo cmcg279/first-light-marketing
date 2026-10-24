@@ -13,6 +13,7 @@
     "build:github": "VITE_BASE_PATH=/first-light-marketing/ npm run build",
     "preview": "vite preview",
     "deploy": "npm run build:aws && npm -w cdk run deploy",
+    "deploy:dev": "npm run build:aws && STAGE=dev npm -w cdk run deploy",
     "deploy:staging": "VITE_BASE_PATH=/ npm run build && STAGE=staging npm -w cdk run deploy"
   },
   "dependencies": {

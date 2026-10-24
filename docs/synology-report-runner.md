@@ -61,6 +61,8 @@ npm run deploy
 
 Save the token somewhere private. The same value must be configured on Synology as `FIRST_LIGHT_RUNNER_TOKEN`.
 
+The API no longer accepts the token in the `Authorization` header. CloudFront uses that header to sign the request to Lambda. The runner sends `X-First-Light-Authorization: Bearer …` and, when the request has a body, `x-amz-content-sha256` set to the SHA-256 of those exact bytes. Copy the updated `scripts/synology_report_runner.py` to the NAS after the production deploy that enables this. Copying it earlier will fail against the previous API.
+
 ## Synology Environment
 
 Required:
