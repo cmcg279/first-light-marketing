@@ -134,7 +134,7 @@ Confirm:
 
 ### POST body hash
 
-CloudFront signs the request to Lambda. For POST and PUT, the viewer must send `x-amz-content-sha256` set to the hex SHA-256 of the exact body bytes. The origin request policy forwards that header. The site and the Synology script send it. GET does not need it.
+CloudFront signs the request to Lambda. For POST and PUT, the viewer must send `x-amz-content-sha256` set to the hex SHA-256 of the exact body bytes. That header is not forwarded through the origin request policy. CloudFront rejects `x-amz-content-sha256` on an allow-list, and Origin Access Control uses the viewer-supplied value when it signs the request to the Lambda function URL. The site and the Synology script still send it, and CORS still allows it. GET does not need it.
 
 Replace `SITE` with the dev `SiteUrl` (no trailing slash).
 
@@ -306,7 +306,7 @@ The diff should be the Contact and Admin function runtimes, not a new function o
 ## What the security changes do
 
 - Lambda function URLs use `AWS_IAM`. CloudFront Origin Access Control signs every origin request. The internet can call `/api/...` on the site domain. A direct call to the function URL is denied.
-- POST and PUT through CloudFront must send `x-amz-content-sha256`. The origin request policy includes that header so CloudFront forwards it into the signed origin request. The site and the Synology script do this. GET does not need it.
+- POST and PUT through CloudFront must send `x-amz-content-sha256`. It is not forwarded through the origin request policy. CloudFront uses the viewer-supplied value when Origin Access Control signs the request to the Lambda function URL. The site and the Synology script send it. GET does not need it.
 - The browser sends the Cognito access token in `X-First-Light-Authorization`, not `Authorization`.
 - Admin passwords and the old signed-session secret are not stored on the Lambda.
 - Extensionless site routes are rewritten to `/index.html` by a CloudFront Function on the site behavior. API 403 and 404 responses are no longer replaced with the homepage. The admin client rejects any API response that is not JSON.
@@ -321,7 +321,7 @@ CloudTrail is not in the stack. The first management-event trail in an account i
 
 Two standard CloudWatch alarms per stack (Lambda errors, five-minute period). The first ten alarms in an account are free; after that each is about $0.10/month. SNS email to confirm the alarm is inside the free tier at this volume.
 
-The first two AWS Budgets in an account are free. Each budget after that is about $0.02/day. Dev plus production is two budgets. Production is £50/month and dev is £10/month, filtered to the `FirstLightStage` tag.
+The first two AWS Budgets in an account are free. Each budget after that is about $0.02/day. Dev plus production is two budgets. This account only accepts USD, so production is $65/month and dev is $13/month (about £50 and £10), filtered to the `FirstLightStage` tag. Alerts fire on actual spend at 80% and 100%, and on the forecast at 100%.
 
 ## Production resources this change must not replace
 

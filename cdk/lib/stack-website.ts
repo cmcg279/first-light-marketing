@@ -341,15 +341,17 @@ export class WebsiteStack extends cdk.Stack {
     alarmTopic.addSubscription(new subscriptions.EmailSubscription(alertEmail));
     addLambdaErrorAlarm(this, "ContactFnErrors", contactFn, alarmTopic);
     addLambdaErrorAlarm(this, "AdminFnErrors", adminFn, alarmTopic);
-    addMonthlyBudget(this, props.stage, isProduction ? 50 : 10, alertEmail);
+    addMonthlyBudget(this, props.stage, isProduction ? 65 : 13, alertEmail);
 
     // Authorization is intentionally absent. OAC overwrites that header with its
     // own SigV4 signature, so the app sends its bearer token in
     // X-First-Light-Authorization instead. CachingDisabled also omits it.
-    // x-amz-content-sha256 is the payload hash CloudFront must forward so OAC can
-    // sign POST/PUT bodies. Other X-Amz-* headers stay off this list.
+    // x-amz-content-sha256 is also absent: CloudFront rejects it in an origin
+    // request policy allow-list. For POST/PUT, OAC uses the viewer-supplied value
+    // when it signs the request to the Lambda function URL. The client still sends
+    // it, and the CORS allow-headers list still names it.
     const apiOriginRequestPolicy = new cloudfront.OriginRequestPolicy(this, "AdminOriginRequestPolicy", {
-      comment: "Forward API headers and the Lambda OAC payload hash. Do not forward Authorization.",
+      comment: "Forward API headers. Do not forward Authorization or x-amz-content-sha256.",
       headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(
         "Content-Type",
         "Accept",
@@ -358,7 +360,6 @@ export class WebsiteStack extends cdk.Stack {
         "Access-Control-Request-Method",
         "X-First-Light-Authorization",
         "X-Viewer-Host",
-        "x-amz-content-sha256",
       ),
       queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(),
       cookieBehavior: cloudfront.OriginRequestCookieBehavior.none(),
@@ -682,19 +683,29 @@ function addLambdaErrorAlarm(stack: cdk.Stack, id: string, fn: lambda.Function, 
   alarm.addAlarmAction(new cwActions.SnsAction(topic));
 }
 
-function addMonthlyBudget(stack: cdk.Stack, stage: string, amountGbp: number, alertEmail: string) {
+function addMonthlyBudget(stack: cdk.Stack, stage: string, amountUsd: number, alertEmail: string) {
+  // This account's Budgets API only accepts USD. $65 / $13 is about £50 / £10.
   const subscribers = [{ subscriptionType: "EMAIL", address: alertEmail }];
   new budgets.CfnBudget(stack, "MonthlyBudget", {
     budget: {
       budgetName: `first-light-${stage}-monthly`,
       budgetType: "COST",
       timeUnit: "MONTHLY",
-      budgetLimit: { amount: amountGbp, unit: "GBP" },
+      budgetLimit: { amount: amountUsd, unit: "USD" },
       costFilters: {
         TagKeyValue: [`user:FirstLightStage$${stage}`],
       },
     },
     notificationsWithSubscribers: [
+      {
+        notification: {
+          notificationType: "ACTUAL",
+          comparisonOperator: "GREATER_THAN",
+          threshold: 80,
+          thresholdType: "PERCENTAGE",
+        },
+        subscribers,
+      },
       {
         notification: {
           notificationType: "ACTUAL",
