@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "tsc",
-    "deploy": "cdk deploy --require-approval never",
+    "deploy": "cdk deploy --require-approval broadening",
     "synth": "cdk synth",
     "diff": "cdk diff"
   },

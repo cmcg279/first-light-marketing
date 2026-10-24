@@ -3,6 +3,8 @@
   "context": {
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "@aws-cdk/core:checkSecretUsage": true,
-    "alertEmail": "niamh@firstlightmarketing.co.uk"
+    "alertEmail": "niamh@firstlightmarketing.co.uk",
+    "mfa": "optional",
+    "lambdaRuntime": "nodejs20.x"
   }
 }

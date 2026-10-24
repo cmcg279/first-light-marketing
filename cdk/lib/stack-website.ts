@@ -24,7 +24,6 @@ interface WebsiteStackProps extends cdk.StackProps {
   stage: string;
 }
 
-const lambdaRuntime = lambda.Runtime.NODEJS_24_X;
 const localOrigins = ["http://localhost:5173", "http://localhost:5174"];
 const productionCloudFrontOrigin = "https://d2w5467qfdqefq.cloudfront.net";
 const senderEmail = "niamh@firstlightmarketing.co.uk";
@@ -35,11 +34,11 @@ const siteContentSecurityPolicy = [
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'self'",
-  "script-src 'self' https://www.tiktok.com https://*.tiktok.com",
-  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self' https://www.tiktok.com https://*.tiktok.com https://*.ttwstatic.com",
+  "style-src 'self' 'unsafe-inline' https://*.ttwstatic.com https://*.tiktokcdn.com",
   "img-src 'self' data: blob: https:",
-  "font-src 'self' data:",
-  "connect-src 'self' https://*.amazoncognito.com https://*.s3.eu-west-1.amazonaws.com https://*.s3.amazonaws.com https://www.tiktok.com https://*.tiktok.com https://*.tiktokcdn.com https://*.tiktokcdn-us.com",
+  "font-src 'self' data: https://*.ttwstatic.com https://*.tiktokcdn.com",
+  "connect-src 'self' https://*.amazoncognito.com https://*.s3.eu-west-1.amazonaws.com https://*.s3.amazonaws.com https://www.tiktok.com https://*.tiktok.com https://*.tiktokcdn.com https://*.tiktokcdn-us.com https://*.ttwstatic.com",
   "frame-src https://www.tiktok.com https://*.tiktok.com",
   "upgrade-insecure-requests",
 ].join("; ");
@@ -51,6 +50,8 @@ export class WebsiteStack extends cdk.Stack {
     const isProduction = props.stage === "production";
     const isDev = props.stage === "dev";
     const removalPolicy = isDev ? cdk.RemovalPolicy.DESTROY : cdk.RemovalPolicy.RETAIN;
+    const lambdaRuntime = lambdaRuntimeSetting(this);
+    const mfaMode = mfaModeSetting(this);
     cdk.Tags.of(this).add("FirstLightStage", props.stage);
 
     const alertEmail = alertEmailAddress(this);
@@ -125,7 +126,9 @@ export class WebsiteStack extends cdk.Stack {
       selfSignUpEnabled: false,
       signInAliases: { email: true },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
-      mfa: cognito.Mfa.REQUIRED,
+      // Optional until FIRST_LIGHT_MFA=required. The hosted UI does not offer TOTP
+      // enrolment while MFA is optional, so the first production deploy must not flip this.
+      mfa: mfaMode === "required" ? cognito.Mfa.REQUIRED : cognito.Mfa.OPTIONAL,
       mfaSecondFactor: {
         sms: false,
         otp: true,
@@ -343,8 +346,10 @@ export class WebsiteStack extends cdk.Stack {
     // Authorization is intentionally absent. OAC overwrites that header with its
     // own SigV4 signature, so the app sends its bearer token in
     // X-First-Light-Authorization instead. CachingDisabled also omits it.
+    // x-amz-content-sha256 is the payload hash CloudFront must forward so OAC can
+    // sign POST/PUT bodies. Other X-Amz-* headers stay off this list.
     const apiOriginRequestPolicy = new cloudfront.OriginRequestPolicy(this, "AdminOriginRequestPolicy", {
-      comment: "Forward API headers except Authorization, which CloudFront OAC uses for SigV4",
+      comment: "Forward API headers and the Lambda OAC payload hash. Do not forward Authorization.",
       headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(
         "Content-Type",
         "Accept",
@@ -353,6 +358,7 @@ export class WebsiteStack extends cdk.Stack {
         "Access-Control-Request-Method",
         "X-First-Light-Authorization",
         "X-Viewer-Host",
+        "x-amz-content-sha256",
       ),
       queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(),
       cookieBehavior: cloudfront.OriginRequestCookieBehavior.none(),
@@ -439,20 +445,52 @@ export class WebsiteStack extends cdk.Stack {
     const apiViewerRequest = new cloudfront.Function(this, "ApiViewerRequest", {
       runtime: cloudfront.FunctionRuntime.JS_2_0,
       comment: "Record the viewer host and answer API CORS preflight without calling Lambda",
+      // A viewer-request function that returns a response skips the response headers
+      // policy, so the preflight itself has to carry the CORS headers.
       code: cloudfront.FunctionCode.fromInline(`function handler(event) {
   var request = event.request;
   var hostHeader = request.headers.host;
   if (hostHeader && hostHeader.value) {
     request.headers["x-viewer-host"] = { value: hostHeader.value };
   }
-  if (request.method === "OPTIONS") {
-    return {
-      statusCode: 204,
-      statusDescription: "No Content",
-      headers: {
-        "cache-control": { value: "no-store" }
-      }
-    };
+  if (request.method !== "OPTIONS") {
+    return request;
+  }
+  var allowed = ${jsMembershipLiteral(allowedOrigins)};
+  var originHeader = request.headers.origin;
+  var origin = originHeader && originHeader.value;
+  var headers = {
+    "cache-control": { value: "no-store" },
+    vary: { value: "Origin" },
+    "access-control-allow-methods": { value: "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS" },
+    "access-control-allow-headers": { value: "Content-Type, Accept, X-First-Light-Authorization, x-amz-content-sha256" },
+    "access-control-max-age": { value: "600" }
+  };
+  if (origin && allowed[origin] === true) {
+    headers["access-control-allow-origin"] = { value: origin };
+  }
+  return {
+    statusCode: 204,
+    statusDescription: "No Content",
+    headers: headers
+  };
+}`),
+    });
+
+    const spaViewerRequest = new cloudfront.Function(this, "SpaViewerRequest", {
+      runtime: cloudfront.FunctionRuntime.JS_2_0,
+      comment: "Serve index.html for extensionless site routes without rewriting API errors",
+      code: cloudfront.FunctionCode.fromInline(`function handler(event) {
+  var request = event.request;
+  var uri = request.uri;
+  if (uri === "/" || uri.charAt(uri.length - 1) === "/") {
+    request.uri = "/index.html";
+    return request;
+  }
+  var slash = uri.lastIndexOf("/");
+  var dot = uri.lastIndexOf(".");
+  if (dot <= slash) {
+    request.uri = "/index.html";
   }
   return request;
 }`),
@@ -507,6 +545,12 @@ export class WebsiteStack extends cdk.Stack {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         responseHeadersPolicy: securityHeadersPolicy,
+        functionAssociations: [
+          {
+            function: spaViewerRequest,
+            eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
+          },
+        ],
       },
       additionalBehaviors: {
         "api/contact": lambdaBehavior(contactOrigin, cloudfront.AllowedMethods.ALLOW_ALL),
@@ -525,20 +569,6 @@ export class WebsiteStack extends cdk.Stack {
         },
       },
       defaultRootObject: "index.html",
-      errorResponses: [
-        {
-          httpStatus: 403,
-          responseHttpStatus: 200,
-          responsePagePath: "/index.html",
-          ttl: cdk.Duration.minutes(5),
-        },
-        {
-          httpStatus: 404,
-          responseHttpStatus: 200,
-          responsePagePath: "/index.html",
-          ttl: cdk.Duration.minutes(5),
-        },
-      ],
       comment: `First Light Marketing — ${props.stage}`,
     });
 
@@ -588,6 +618,9 @@ export class WebsiteStack extends cdk.Stack {
     new cdk.CfnOutput(this, "DeepseekSecretArn", { value: deepseekSecret.secretArn });
     new cdk.CfnOutput(this, "InstagramSessionSecretArn", { value: instagramSessionSecret.secretArn });
     new cdk.CfnOutput(this, "AlertEmail", { value: alertEmail });
+    new cdk.CfnOutput(this, "TableName", { value: table.tableName });
+    new cdk.CfnOutput(this, "MfaMode", { value: mfaMode });
+    new cdk.CfnOutput(this, "LambdaRuntime", { value: lambdaRuntime.name });
   }
 }
 
@@ -596,6 +629,33 @@ function splitCsv(value: string | undefined) {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function configuredSetting(scope: Construct, envName: string, contextKey: string, fallback: string) {
+  const fromEnv = process.env[envName]?.trim();
+  if (fromEnv) return fromEnv;
+  const fromContext = scope.node.tryGetContext(contextKey);
+  if (typeof fromContext === "string" && fromContext.trim()) return fromContext.trim();
+  return fallback;
+}
+
+function mfaModeSetting(scope: Construct) {
+  const mode = configuredSetting(scope, "FIRST_LIGHT_MFA", "mfa", "optional").toLowerCase();
+  if (mode !== "optional" && mode !== "required") {
+    throw new Error("FIRST_LIGHT_MFA must be optional or required.");
+  }
+  return mode;
+}
+
+function lambdaRuntimeSetting(scope: Construct) {
+  const runtime = configuredSetting(scope, "FIRST_LIGHT_LAMBDA_RUNTIME", "lambdaRuntime", "nodejs20.x").toLowerCase();
+  if (runtime === "nodejs20.x" || runtime === "nodejs20" || runtime === "20") return lambda.Runtime.NODEJS_20_X;
+  if (runtime === "nodejs24.x" || runtime === "nodejs24" || runtime === "24") return lambda.Runtime.NODEJS_24_X;
+  throw new Error("FIRST_LIGHT_LAMBDA_RUNTIME must be nodejs20.x or nodejs24.x.");
+}
+
+function jsMembershipLiteral(values: string[]) {
+  return `{${values.map((value) => `${JSON.stringify(value)}:true`).join(",")}}`;
 }
 
 function alertEmailAddress(scope: Construct) {

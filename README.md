@@ -20,7 +20,7 @@ npm run deploy:dev                     # FirstLight-Dev, cloudfront.net URL, no 
 npm run deploy                         # production stack FirstLight
 ```
 
-Admin sign-in is Cognito with MFA required. There is no shared admin password. Set `FIRST_LIGHT_AUDIT_RUNNER_TOKEN` as well if the Synology report runner should be enabled.
+Admin sign-in is Cognito only. There is no shared admin password. MFA stays optional on the first production deploy; a later deploy sets `FIRST_LIGHT_MFA=required`. Set `FIRST_LIGHT_AUDIT_RUNNER_TOKEN` as well if the Synology report runner should be enabled. The Lambda runtime stays Node.js 20 until a separate deploy sets `FIRST_LIGHT_LAMBDA_RUNTIME=nodejs24.x`.
 
 The deployed site posts the lead form to `/api/contact`, which CloudFront routes to the Lambda function URL. The function URL itself rejects unsigned calls. No frontend `.env` value is needed for AWS hosting.
 
@@ -35,7 +35,7 @@ The admin portal is available at `/admin` after deployment. It lets Niamh:
 - toggle that announcement live or hidden
 - create, upload, download and delete audit report PDFs
 
-Sign-in uses the Cognito hosted UI and a TOTP authenticator. See [docs/DEPLOY.md](docs/DEPLOY.md) before deploying this to production, so the existing admin user is not locked out.
+Sign-in uses the Cognito hosted UI. TOTP is turned on only in a later deploy, after it has been tested on dev. See [docs/DEPLOY.md](docs/DEPLOY.md) before deploying this to production, so the existing admin user is not locked out.
 
 ## Synology report runner
 

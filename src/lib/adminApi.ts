@@ -379,10 +379,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     },
   });
 
-  const body = await response.json().catch(() => ({}));
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(
+      response.ok
+        ? "The server returned a page instead of JSON. The API call did not succeed."
+        : `Request failed (${response.status}). The server did not return JSON.`,
+    );
+  }
+
+  const body = await response.json().catch(() => {
+    throw new Error("The server returned invalid JSON.");
+  });
 
   if (!response.ok) {
-    throw new Error(body.error || "Request failed.");
+    throw new Error(body.error || `Request failed (${response.status}).`);
   }
 
   return body as T;
