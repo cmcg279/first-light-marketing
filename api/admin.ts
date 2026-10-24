@@ -13,6 +13,8 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { XMLParser } from "fast-xml-parser";
+import { createAwsPresenceStore } from "./presence-audit-aws";
+import { handlePresenceRequest, isPresenceAdminRoute, loadPresenceConfig, PresenceError } from "./presence-audit";
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
@@ -453,6 +455,18 @@ export async function handler(event: LambdaFunctionUrlEvent) {
       return completeAuditReportUpload(event.body);
     }
 
+    if (isPresenceAdminRoute(method, path)) {
+      const result = await handlePresenceRequest({
+        method,
+        path,
+        body: event.body,
+        config: loadPresenceConfig(process.env),
+        authorize: () => requireAuth(event),
+        store: createAwsPresenceStore(),
+      });
+      return response(result.statusCode, result.body);
+    }
+
     if (path === "/api/admin/blog" && method === "GET") {
       await requireAuth(event);
       return response(200, { posts: await listBlogPosts("all") });
@@ -470,7 +484,7 @@ export async function handler(event: LambdaFunctionUrlEvent) {
 
     return response(404, { error: "Not found" });
   } catch (error) {
-    if (error instanceof AuthError) {
+    if (error instanceof AuthError || error instanceof PresenceError) {
       return response(error.statusCode, { error: error.message });
     }
 

@@ -155,6 +155,62 @@ export interface AuditReport {
   completedAt?: string;
 }
 
+export interface PresenceSocials {
+  instagram: string;
+  facebook: string;
+  tiktok: string;
+  linkedin: string;
+  youtube: string;
+  x: string;
+}
+
+export type PresenceRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type PresenceCostLabel = "Free" | "Estimated" | "Actual" | "Released";
+
+export interface PresenceRun {
+  id: string;
+  businessName: string;
+  website: string;
+  socials: PresenceSocials;
+  location: string;
+  notes: string;
+  testMode: boolean;
+  pageLimit: number;
+  status: PresenceRunStatus;
+  progress: number;
+  statusMessage: string;
+  fileName: string;
+  errorMessage?: string;
+  estimatedCostGbp: number;
+  costLabel: PresenceCostLabel;
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  downloadReady: boolean;
+}
+
+export interface PresenceSpendSummary {
+  month: string;
+  monthToDateGbp: number;
+  capGbp: number;
+  estimatePerRunGbp: number;
+  realRunsEnabled: boolean;
+  workerConfigured: boolean;
+  defaultTestMode: boolean;
+  pageLimit: number;
+}
+
+export interface PresenceRunInput {
+  businessName: string;
+  website: string;
+  socials: PresenceSocials;
+  location: string;
+  notes: string;
+  testMode: boolean;
+  pageLimit: number;
+}
+
 export interface AdminLead {
   id: string;
   createdAt: string;

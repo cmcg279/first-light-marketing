@@ -72,6 +72,19 @@ export FIRST_LIGHT_AUDIT_RUNNER_TOKEN="the-existing-runner-token"  # required on
 
 `FIRST_LIGHT_ADMIN_PASSWORD` and `FIRST_LIGHT_ADMIN_SESSION_SECRET` are no longer read. Admin sign-in is Cognito only.
 
+### Online presence audits (optional)
+
+Leave these unset for a normal production deploy. The audit worker, its role, and the Apify secret are created only when an image tag is set. Without that tag the stack does not gain a Lambda, and the table, buckets, and user pool are not replaced. AdminFn does gain the cap settings below so the Presence tab can enforce them once a worker exists.
+
+```bash
+export FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG=""          # empty skips the worker
+export FIRST_LIGHT_AUDIT_WORKER_IMAGE_REPO="first-light-audit-worker"
+export FIRST_LIGHT_AUDIT_MONTHLY_CAP_GBP="50"         # real runs only
+export FIRST_LIGHT_AUDIT_RUN_COST_ESTIMATE_GBP="5"    # used when the worker does not report a cost
+```
+
+Do not export `FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true` until a dev test run has been checked. Real mode is off unless that value is exactly `true`. Dev and production both default the worker to free test mode. The full build, push, and dev test steps are in [AUDIT_REPORTS.md](AUDIT_REPORTS.md). Do not put an Apify token or an AI key in the environment.
+
 MFA and the Lambda runtime have their own switches. Leave them unset for the first production deploy. `cdk.json` defaults are `mfa=optional` and `lambdaRuntime=nodejs20.x`. The environment variable wins when it is set.
 
 ```bash
@@ -225,6 +238,7 @@ Read the diff before approving anything. All of the following must be true:
 - `AWS::Cognito::UserPoolDomain` (`AdminUserPoolDomain`) shows no change. The domain prefix is the same.
 - `AWS::Cognito::UserPoolClient` shows no change. Callback URLs, logout URLs, and the client id stay as they are. If the diff adds or removes a URL, fix the environment variables above and run the diff again. Do not deploy a client change in phase 1.
 - The DynamoDB table, site bucket, media bucket, audit-report bucket, and user pool are not replaced. A replacement shows the resource being destroyed and created again.
+- With `FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG` unset, there is no `AuditWorkerFn`, no Apify secret, and no new bucket. AdminFn may show new environment variables for the presence-audit cap. That is an update, not a new table.
 
 Phase 1 may still change Lambda code, function URL auth, the distribution, headers, and alarms. Those are in place. Phase 2's diff should be the user pool MFA setting moving from optional to required, and nothing else.
 
