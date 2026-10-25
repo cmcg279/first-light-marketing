@@ -35,6 +35,7 @@ export function createAwsPresenceStore(): PresenceStore {
     monthSpendCents: (month) => monthSpendCents(tableName, month),
     insertRun: (run, reservation) => insertRun(tableName, run, reservation),
     saveRun: (run, reservation, claim) => saveRun(tableName, run, reservation, claim),
+    getRunLock: () => getRunLock(tableName),
     acquireRunLock: (runId, now) => acquireRunLock(tableName, runId, now),
     releaseRunLock: (runId) => releaseRunLock(tableName, runId),
     readObject: (key) => readObject(bucket, key),
@@ -195,6 +196,20 @@ function spendChange(tableName: string, reservation: SpendReservation) {
       ExpressionAttributeValues: values,
     },
   };
+}
+
+async function getRunLock(tableName: string) {
+  const result = await db.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: { PK: PRESENCE_LOCK_PK, SK: PRESENCE_LOCK_SK },
+      ConsistentRead: true,
+    }),
+  );
+  const holder = result.Item?.holder;
+  if (typeof holder !== "string" || !holder) return null;
+  const expiresAt = result.Item?.expiresAt;
+  return { holder, expiresAt: typeof expiresAt === "string" ? expiresAt : "" };
 }
 
 async function acquireRunLock(tableName: string, runId: string, now: Date) {

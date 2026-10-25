@@ -412,6 +412,28 @@ describe("presence audit API", () => {
     assert.equal(await store.monthSpendCents("2026-10"), 600);
   });
 
+  it("accepts a new run when the worker already wrote a terminal status before the portal read it", async () => {
+    const config = testConfig({ realRunsEnabled: true });
+    for (const status of ["succeeded", "needs_review", "failed"] as const) {
+      const store = memoryStore();
+      const created = await postRun(store, { ...validBody(), testMode: false }, config);
+      assert.equal(created.statusCode, 200);
+      const id = (created.body as { run: { id: string } }).run.id;
+      const stored = await store.getRun(id);
+      assert.ok(stored);
+      stored.status = status;
+      stored.finishedAt = NOW.toISOString();
+      if (status === "failed") {
+        stored.errorCode = "internal";
+        stored.errorMessage = "worker failed";
+      }
+      await store.saveRun(stored, null, null);
+      const next = await postRun(store, { ...validBody(), company: "Next Co", testMode: true }, config);
+      assert.equal(next.statusCode, 200, status);
+      assert.equal((next.body as { error?: string }).error, undefined, status);
+    }
+  });
+
   it("allows a new run after the previous one succeeds or fails", async () => {
     const store = memoryStore();
     const config = testConfig({ realRunsEnabled: true });
@@ -746,6 +768,9 @@ function memoryStore(): PresenceStore & {
     },
     async presign(key: string, downloadName: string) {
       return `https://downloads.invalid/${encodeURIComponent(key)}?name=${encodeURIComponent(downloadName)}`;
+    },
+    async getRunLock() {
+      return lock ? { holder: lock.holder, expiresAt: lock.expiresAt } : null;
     },
     async acquireRunLock(runId: string, now: Date) {
       const expiresAt = new Date(now.getTime() + RUN_TIMEOUT_MS).toISOString();

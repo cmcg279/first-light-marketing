@@ -176,12 +176,18 @@ export interface InvokeOutcome {
   payload: Record<string, unknown> | null;
 }
 
+export interface PresenceRunLock {
+  holder: string;
+  expiresAt: string;
+}
+
 export interface PresenceStore {
   listRuns(): Promise<PresenceRun[]>;
   getRun(id: string): Promise<PresenceRun | null>;
   monthSpendCents(month: string): Promise<number>;
   insertRun(run: PresenceRun, reservation: SpendReservation | null): Promise<void>;
   saveRun(run: PresenceRun, reservation: SpendReservation | null, claim: PortalClaim | null): Promise<void>;
+  getRunLock(): Promise<PresenceRunLock | null>;
   acquireRunLock(runId: string, now: Date): Promise<boolean>;
   releaseRunLock(runId: string): Promise<void>;
   readObject(key: string): Promise<Record<string, unknown> | null>;
@@ -692,7 +698,9 @@ async function listRuns(input: PresenceRequest, now: Date) {
   const next: PresenceRun[] = [];
   for (const run of runs) {
     const open = run.status === "queued" || run.status === "running";
-    next.push(await refreshRun(input, run, now, open && reads < 15));
+    const refreshed = await refreshRun(input, run, now, open && reads < 15);
+    await releaseLockIfFinished(input, refreshed);
+    next.push(refreshed);
     if (open) reads += 1;
   }
   next.sort((a, b) => (b.startedAt || b.createdAt).localeCompare(a.startedAt || a.createdAt));
@@ -703,6 +711,7 @@ async function listRuns(input: PresenceRequest, now: Date) {
 
 async function getRun(input: PresenceRequest, id: string, now: Date) {
   const refreshed = await refreshRun(input, await requireRun(input, id), now, true);
+  await releaseLockIfFinished(input, refreshed);
   const month = monthKey(now);
   const spent = await input.store.monthSpendCents(month);
   return json(200, { run: publicRun(refreshed), spend: spendSummary(input.config, month, spent) });
@@ -750,6 +759,7 @@ async function createRun(input: PresenceRequest, now: Date, requestedBy: string,
   validateJob(workerPayload(run));
 
   const reservation = reserveCents > 0 ? reserve(month, reserveCents, input.config.capCents) : null;
+  await releaseLockForFinishedHolder(input, now);
   if (!(await input.store.acquireRunLock(id, now))) throw new PresenceError(409, IN_PROGRESS_MESSAGE);
   try {
     try {
@@ -876,7 +886,10 @@ async function refreshRun(input: PresenceRequest, run: PresenceRun, now: Date, r
     current = overlayWorkerResult(run, raw);
   }
   const projected = projectRun(current, now, input.config);
-  if (projected.costDeltaCents === 0 && projected.claim === null && sameObserved(run, projected.run)) return projected.run;
+  if (projected.costDeltaCents === 0 && projected.claim === null && sameObserved(run, projected.run)) {
+    await releaseLockIfFinished(input, projected.run);
+    return projected.run;
+  }
   return persistProjection(input, projected);
 }
 
@@ -937,8 +950,24 @@ function isBlocking(run: PresenceRun, now: Date) {
   return !Number.isFinite(started) || now.getTime() - started <= RUN_TIMEOUT_MS;
 }
 
+async function releaseLockForFinishedHolder(input: PresenceRequest, now: Date) {
+  const held = await input.store.getRunLock();
+  if (!held?.holder) return;
+  const holder = await input.store.getRun(held.holder);
+  if (!holder) return;
+  if (isTerminal(holder.status)) {
+    await refreshRun(input, holder, now, true);
+    return;
+  }
+  const started = Date.parse(holder.startedAt || holder.createdAt);
+  const open = holder.status === "queued" || holder.status === "running";
+  if (open && Number.isFinite(started) && now.getTime() - started > RUN_TIMEOUT_MS) {
+    await refreshRun(input, holder, now, true);
+  }
+}
+
 async function releaseLockIfFinished(input: PresenceRequest, run: PresenceRun) {
-  if (isTerminal(run.status) || run.trackingStopped) await input.store.releaseRunLock(run.id);
+  if (isTerminal(run.status)) await input.store.releaseRunLock(run.id);
 }
 
 async function requireRun(input: PresenceRequest, id: string) {
