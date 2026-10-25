@@ -649,33 +649,29 @@ interface PresenceAuditProps {
   auditReportsBucket: s3.Bucket;
   adminFn: lambda.Function;
   alarmTopic: sns.ITopic;
-  deepseekSecret: secretsmanager.ISecret;
 }
 
 function addPresenceAudit(stack: cdk.Stack, props: PresenceAuditProps) {
-  const pageLimit = integerSetting(stack, "FIRST_LIGHT_AUDIT_PAGE_LIMIT", "auditPageLimit", 35, 1, 35, "FIRST_LIGHT_AUDIT_PAGE_LIMIT");
-  const capGbp = moneySetting(stack, "FIRST_LIGHT_AUDIT_MONTHLY_CAP_GBP", "auditMonthlyCapGbp", 50, 0);
-  const estimateGbp = moneySetting(
+  const capUsd = moneySetting(stack, "FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD", "auditMonthlyCapUsd", 65, 0);
+  const estimateUsd = moneySetting(
     stack,
-    "FIRST_LIGHT_AUDIT_RUN_COST_ESTIMATE_GBP",
-    "auditRunCostEstimateGbp",
-    5,
+    "FIRST_LIGHT_AUDIT_RUN_COST_ESTIMATE_USD",
+    "auditRunCostEstimateUsd",
+    6,
     0.01,
   );
-  const brandConfigPath = brandPathSetting(stack);
   const allowReal = settingString(stack, "FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL", "auditWorkerAllowReal", "") === "true";
   const defaultTestMode = settingString(stack, "FIRST_LIGHT_PRESENCE_DEFAULT_TEST_MODE", "presenceDefaultTestMode", "true") !== "false";
   const image = auditWorkerImage(stack);
 
-  props.adminFn.addEnvironment("AUDIT_MONTHLY_CAP_GBP", String(capGbp));
-  props.adminFn.addEnvironment("AUDIT_RUN_COST_ESTIMATE_GBP", String(estimateGbp));
-  props.adminFn.addEnvironment("AUDIT_PAGE_LIMIT", String(pageLimit));
+  props.adminFn.addEnvironment("AUDIT_MONTHLY_CAP_USD", String(capUsd));
+  props.adminFn.addEnvironment("AUDIT_RUN_COST_ESTIMATE_USD", String(estimateUsd));
   props.adminFn.addEnvironment("AUDIT_REAL_RUNS_ENABLED", allowReal ? "true" : "false");
   props.adminFn.addEnvironment("PRESENCE_DEFAULT_TEST_MODE", defaultTestMode ? "true" : "false");
-  props.adminFn.addEnvironment("AUDIT_BRAND_CONFIG_PATH", brandConfigPath);
 
-  // No image means no worker, no new IAM role, and no Apify secret. Production stays
-  // free of those resources until FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG is set.
+  // No image means no worker, no new IAM role, and no social-audit secret.
+  // Production stays free of those resources until FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG is set.
+  // The GSI on the existing table is added either way.
   if (!image) return;
 
   const memorySize = integerSetting(
@@ -700,11 +696,33 @@ function addPresenceAudit(stack: cdk.Stack, props: PresenceAuditProps) {
     stack,
     "FIRST_LIGHT_AUDIT_WORKER_EPHEMERAL_MB",
     "auditWorkerEphemeralMb",
-    2048,
+    512,
     512,
     10240,
     "FIRST_LIGHT_AUDIT_WORKER_EPHEMERAL_MB",
   );
+  const reservedConcurrency = integerSetting(
+    stack,
+    "FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY",
+    "auditWorkerReservedConcurrency",
+    1,
+    1,
+    2,
+    "FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY",
+  );
+  const socialAuditSecret = new secretsmanager.Secret(stack, "SocialAuditSecret", {
+    secretName: `first-light/${props.stage}/social-audit`,
+    description: "JSON keys APIFY_TOKEN, GOOGLE_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY. Empty until a real run. Test mode does not read this.",
+    secretStringValue: cdk.SecretValue.unsafePlainText(
+      JSON.stringify({
+        APIFY_TOKEN: "",
+        GOOGLE_API_KEY: "",
+        OPENAI_API_KEY: "",
+        GEMINI_API_KEY: "",
+      }),
+    ),
+    removalPolicy: props.isDev ? cdk.RemovalPolicy.DESTROY : cdk.RemovalPolicy.RETAIN,
+  });
   const repository = ecr.Repository.fromRepositoryName(stack, "AuditWorkerRepo", image.repositoryName);
   const worker = new lambda.DockerImageFunction(stack, "AuditWorkerFn", {
     code: lambda.DockerImageCode.fromEcr(repository, { tagOrDigest: image.tag }),
@@ -712,29 +730,21 @@ function addPresenceAudit(stack: cdk.Stack, props: PresenceAuditProps) {
     memorySize,
     timeout: cdk.Duration.minutes(timeoutMinutes),
     ephemeralStorageSize: cdk.Size.mebibytes(ephemeralMb),
-    description: "First Light online presence audit worker. Test mode does not call Apify or AI.",
+    reservedConcurrentExecutions: reservedConcurrency,
+    description: "First Light online presence audit worker. social_audit.job.handler. Test mode does not call Apify or AI.",
     environment: {
-      AUDIT_REPORTS_BUCKET: props.auditReportsBucket.bucketName,
-      AUDIT_RUNS_PREFIX: "runs",
+      AUDIT_REPORTS_BUCKET_NAME: props.auditReportsBucket.bucketName,
+      AUDIT_REPORTS_PREFIX: "",
       AUDIT_TABLE_NAME: props.table.tableName,
-      TABLE_NAME: props.table.tableName,
-      // true forces the free path. Real mode is a deploy-time switch, not the default.
-      AUDIT_WORKER_TEST_MODE: allowReal ? "false" : "true",
-      AUDIT_PAGE_LIMIT: String(pageLimit),
-      AUDIT_BRAND_CONFIG_PATH: brandConfigPath,
-      DEEPSEEK_SECRET_ID: props.deepseekSecret.secretArn,
+      SOCIAL_AUDIT_SECRET_ID: socialAuditSecret.secretArn,
+      // Set whenever real runs are not explicitly allowed, so a bad event cannot spend.
+      ...(allowReal ? {} : { SOCIAL_AUDIT_TEST_MODE: "1" }),
     },
   });
 
-  const apifySecret = new secretsmanager.Secret(stack, "ApifyApiTokenSecret", {
-    secretName: `first-light/${props.stage}/apify-api-token`,
-    description: "Apify token for First Light presence audits. Replace the generated placeholder before a real run. Test mode does not read it.",
-    ...(props.isDev ? { removalPolicy: cdk.RemovalPolicy.DESTROY } : {}),
-  });
-  worker.addEnvironment("APIFY_SECRET_ID", apifySecret.secretArn);
   worker.addToRolePolicy(
     new iam.PolicyStatement({
-      actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+      actions: ["s3:GetObject", "s3:PutObject"],
       resources: [props.auditReportsBucket.arnForObjects("runs/*")],
     }),
   );
@@ -742,19 +752,16 @@ function addPresenceAudit(stack: cdk.Stack, props: PresenceAuditProps) {
     new iam.PolicyStatement({
       actions: ["s3:ListBucket"],
       resources: [props.auditReportsBucket.bucketArn],
-      conditions: { StringLike: { "s3:prefix": ["runs/*"] } },
+      conditions: { StringLike: { "s3:prefix": ["runs/", "runs/*"] } },
     }),
   );
-  props.deepseekSecret.grantRead(worker);
-  apifySecret.grantRead(worker);
+  socialAuditSecret.grantRead(worker);
   worker.addToRolePolicy(
     new iam.PolicyStatement({
-      actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"],
+      actions: ["dynamodb:UpdateItem"],
       resources: [props.table.tableArn],
       conditions: {
-        "ForAllValues:StringLike": {
-          "dynamodb:LeadingKeys": ["PRESENCE_RUN#*", "PRESENCE_SPEND"],
-        },
+        "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["BIZ#*"] },
         Null: { "dynamodb:LeadingKeys": "false" },
       },
     }),
@@ -765,9 +772,9 @@ function addPresenceAudit(stack: cdk.Stack, props: PresenceAuditProps) {
   addLambdaErrorAlarm(stack, "AuditWorkerFnErrors", worker, props.alarmTopic);
 
   new cdk.CfnOutput(stack, "AuditWorkerFunctionName", { value: worker.functionName });
-  new cdk.CfnOutput(stack, "ApifySecretArn", {
-    value: apifySecret.secretArn,
-    description: "Replace the generated placeholder with the Apify token before a real run. Test mode does not read it.",
+  new cdk.CfnOutput(stack, "SocialAuditSecretArn", {
+    value: socialAuditSecret.secretArn,
+    description: "JSON secret with empty APIFY_TOKEN, GOOGLE_API_KEY, OPENAI_API_KEY, and GEMINI_API_KEY placeholders. Test mode does not read it.",
   });
 }
 
@@ -801,14 +808,6 @@ function checkedImage(repositoryName: string, tag: string) {
     throw new Error("The audit worker image tag is invalid.");
   }
   return { repositoryName, tag };
-}
-
-function brandPathSetting(scope: Construct) {
-  const value = settingString(scope, "FIRST_LIGHT_AUDIT_BRAND_CONFIG_PATH", "auditBrandConfigPath", "brand.json");
-  if (value.length > 200 || value.includes("..") || /[\r\n]/.test(value)) {
-    throw new Error("FIRST_LIGHT_AUDIT_BRAND_CONFIG_PATH must be a path inside the worker image.");
-  }
-  return value;
 }
 
 function moneySetting(scope: Construct, envName: string, contextKey: string, fallback: number, minimum: number) {
