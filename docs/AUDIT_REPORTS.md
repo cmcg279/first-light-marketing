@@ -104,7 +104,9 @@ Retry creates a new ULID and sets `options.compare_to_run_id` to the previous ru
 
 ### IAM
 
-The worker role can `s3:GetObject` and `s3:PutObject` on `runs/*`, and `s3:ListBucket` with prefix `runs/` and `runs/*`. It can `secretsmanager:GetSecretValue` on the one JSON secret, and `dynamodb:UpdateItem` on the table only when the leading key matches `BIZ#*`. It cannot delete objects, abort uploads, or read the spend counter. AdminFn can invoke it. Reserved concurrency defaults to 1 and can be 1 or 2 (`FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY`).
+The worker role can `s3:GetObject` and `s3:PutObject` on `runs/*`, and `s3:ListBucket` with prefix `runs/` and `runs/*`. It can `secretsmanager:GetSecretValue` on the one JSON secret, and `dynamodb:UpdateItem` on the table only when the leading key matches `BIZ#*`. It cannot delete objects, abort uploads, or read the spend counter. AdminFn can invoke it.
+
+Reserved concurrency is off unless `FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY` is `1` or `2`. This account's Lambda concurrent-executions quota is 10, and Lambda keeps 10 unreserved, so reserving 1 fails with "decreases account's UnreservedConcurrentExecution below its minimum value of [10]". The default is unset (`none`, `unset`, and `0` also leave the property off) so dev and production can deploy today. After the quota is raised to 100 or more, export `FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY=1` and redeploy. That caps the worker at one execution. `2` is the maximum.
 
 ## Admin routes
 
@@ -158,13 +160,14 @@ npm run deploy:dev
 
 Confirm the stack outputs `AuditWorkerFunctionName` and `SocialAuditSecretArn`. The secret `first-light/<stage>/social-audit` uses `GenerateSecretString`. The template JSON has empty `APIFY_TOKEN`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, and `GEMINI_API_KEY`, plus a generated `cdkGenerated` field the worker ignores. CloudFormation writes that value when the secret is created. A later deploy does not write it again unless that generate block changes, so tokens entered afterwards stay. Do not edit the generate block after the secret exists: a change creates a new secret version. Production retains the secret on stack delete. Test mode does not read it. Do not put those values in a Lambda environment variable.
 
-`STAGE=dev npx cdk synth` in `cdk/` also succeeds with the tag unset. With the tag set, the template contains `AuditWorkerFn` (arm64, 2048 MB, 15 minute timeout, 512 MB ephemeral storage, reserved concurrency 1) and does not add a function URL for it.
+`STAGE=dev npx cdk synth` in `cdk/` also succeeds with the tag unset. With the tag set, the template contains `AuditWorkerFn` (arm64, 2048 MB, 15 minute timeout, 512 MB ephemeral storage, no reserved concurrency unless the variable below is `1` or `2`) and does not add a function URL for it.
 
 ```bash
 export FIRST_LIGHT_AUDIT_WORKER_MEMORY_MB="2048"
 export FIRST_LIGHT_AUDIT_WORKER_TIMEOUT_MINUTES="15"
 export FIRST_LIGHT_AUDIT_WORKER_EPHEMERAL_MB="512"
-export FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY="1"
+# Leave unset until the Lambda concurrent-executions quota is 100 or more.
+# export FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY="1"
 ```
 
 ## Free test run

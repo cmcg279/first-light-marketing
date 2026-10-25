@@ -81,9 +81,18 @@ export FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG=""          # empty skips the worker
 export FIRST_LIGHT_AUDIT_WORKER_IMAGE_REPO="first-light-audit-worker"
 export FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD="65"         # real runs only, compared with cost_usd
 export FIRST_LIGHT_AUDIT_RUN_COST_ESTIMATE_USD="6"    # released on failure, timeout, or cancel; replaced by cost_usd
+# Leave reserved concurrency unset. See AUDIT_REPORTS.md.
 ```
 
 Do not export `FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true` until a dev test run has been checked. Real mode is off unless that value is exactly `true`. While it is off, the worker gets `SOCIAL_AUDIT_TEST_MODE=1`. Dev and production both default the worker to free test mode. The full build, push, and dev test steps are in [AUDIT_REPORTS.md](AUDIT_REPORTS.md). Do not put an Apify token or an AI key in the environment. The worker secret is one JSON object (`APIFY_TOKEN`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) created with `GenerateSecretString` when the image tag is set. A later stack update does not reset values entered in Secrets Manager unless that generate block changes. Production retains the secret.
+
+This account's Lambda concurrent-executions quota is 10. Lambda keeps 10 unreserved, so `ReservedConcurrentExecutions: 1` fails the deploy with "decreases account's UnreservedConcurrentExecution below its minimum value of [10]". The same failure would hit production. `FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY` therefore defaults to unset (`none`, `unset`, and `0` do the same). The function is created with no reserved concurrency. After the quota is raised to 100 or more, turn it back on and redeploy:
+
+```bash
+export FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY="1"
+```
+
+`2` is the highest value this stack accepts.
 
 MFA and the Lambda runtime have their own switches. Leave them unset for the first production deploy. `cdk.json` defaults are `mfa=optional` and `lambdaRuntime=nodejs20.x`. The environment variable wins when it is set.
 

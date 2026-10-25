@@ -707,15 +707,9 @@ function addPresenceAudit(stack: cdk.Stack, props: PresenceAuditProps) {
     10240,
     "FIRST_LIGHT_AUDIT_WORKER_EPHEMERAL_MB",
   );
-  const reservedConcurrency = integerSetting(
-    stack,
-    "FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY",
-    "auditWorkerReservedConcurrency",
-    1,
-    1,
-    2,
-    "FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY",
-  );
+  // Unset by default. This account's concurrent-executions quota is 10, and Lambda
+  // keeps 10 unreserved, so ReservedConcurrentExecutions: 1 fails the deploy.
+  const reservedConcurrency = reservedConcurrencySetting(stack);
   const socialAuditSecret = new secretsmanager.Secret(stack, "SocialAuditSecret", {
     secretName: `first-light/${props.stage}/social-audit`,
     description: "JSON keys APIFY_TOKEN, GOOGLE_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY. Generated once. Test mode does not read this.",
@@ -740,11 +734,10 @@ function addPresenceAudit(stack: cdk.Stack, props: PresenceAuditProps) {
     memorySize,
     timeout: cdk.Duration.minutes(timeoutMinutes),
     ephemeralStorageSize: cdk.Size.mebibytes(ephemeralMb),
-    reservedConcurrentExecutions: reservedConcurrency,
+    ...(reservedConcurrency === undefined ? {} : { reservedConcurrentExecutions: reservedConcurrency }),
     description: "First Light online presence audit worker. social_audit.job.handler. Test mode does not call Apify or AI.",
-    // Reserved concurrency is 1. Lambda's default async policy would retry an error
-    // twice and hold a throttled event for up to six hours. A late retry would spend
-    // Apify money after the portal had already marked the run failed and released the cap.
+    // No async retries. A throttled or crashed invoke must not be replayed after the
+    // portal has marked the run failed and released the cap.
     ...auditWorkerAsyncInvoke,
     environment: {
       AUDIT_REPORTS_BUCKET_NAME: props.auditReportsBucket.bucketName,
@@ -829,6 +822,17 @@ function moneySetting(scope: Construct, envName: string, contextKey: string, fal
   const value = Number(raw);
   if (!Number.isFinite(value) || value < minimum || value > 100_000) {
     throw new Error(`${envName} must be a number from ${minimum} to 100000.`);
+  }
+  return value;
+}
+
+function reservedConcurrencySetting(scope: Construct) {
+  const raw = settingString(scope, "FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY", "auditWorkerReservedConcurrency", "none");
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "none" || normalized === "unset" || normalized === "0") return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || (value !== 1 && value !== 2)) {
+    throw new Error("FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY must be none, unset, 0, 1, or 2.");
   }
   return value;
 }
