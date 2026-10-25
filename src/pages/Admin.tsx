@@ -38,7 +38,6 @@ import type {
   MediaAsset,
   PresenceRun,
   PresenceRunInput,
-  PresenceSocials,
   PresenceSpendSummary,
 } from "../types/admin";
 
@@ -509,9 +508,7 @@ export default function Admin() {
 
   async function handleCancelPresenceRun(run: PresenceRun) {
     const confirmed = window.confirm(
-      run.status === "queued"
-        ? `Cancel the audit for ${run.businessName}? A queued real run releases its estimate.`
-        : `Cancel the audit for ${run.businessName}? A run that has already started keeps its estimate.`,
+      `Stop tracking the audit for ${run.company}? The worker has no cancel, so a run that has already started may still finish and the spend may already be committed. This releases the cap reservation.`,
     );
     if (!confirmed) return;
 
@@ -523,9 +520,9 @@ export default function Admin() {
       const result = await cancelPresenceRun(run.id);
       setPresenceRuns((current) => current.map((item) => (item.id === result.run.id ? result.run : item)));
       setPresenceSpend(result.spend);
-      setStatus("Audit cancelled.");
+      setStatus("Tracking stopped. The reservation was released. Spend that is already committed is not undone.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not cancel the audit.");
+      setError(err instanceof Error ? err.message : "Could not stop tracking the audit.");
     } finally {
       setSaving(false);
     }
@@ -538,9 +535,9 @@ export default function Admin() {
 
     try {
       const result = await retryPresenceRun(run.id);
-      setPresenceRuns((current) => current.map((item) => (item.id === result.run.id ? result.run : item)));
+      setPresenceRuns((current) => [result.run, ...current.filter((item) => item.id !== result.run.id)]);
       setPresenceSpend(result.spend);
-      setStatus(result.run.testMode ? "Free test run queued again." : "Audit queued again.");
+      setStatus(result.run.testMode ? "A new free test run was queued." : "A new audit was queued.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not retry the audit.");
     } finally {
@@ -1436,15 +1433,6 @@ function AuditReportsManager({
   );
 }
 
-const emptySocials: PresenceSocials = {
-  instagram: "",
-  facebook: "",
-  tiktok: "",
-  linkedin: "",
-  youtube: "",
-  x: "",
-};
-
 function PresenceAudits({
   runs,
   spend,
@@ -1464,12 +1452,13 @@ function PresenceAudits({
   onDownload: (run: PresenceRun) => Promise<void>;
   onRefresh: () => Promise<unknown>;
 }) {
-  const [businessName, setBusinessName] = useState("");
+  const [company, setCompany] = useState("");
   const [website, setWebsite] = useState("");
-  const [socials, setSocials] = useState<PresenceSocials>(emptySocials);
-  const [location, setLocation] = useState("");
-  const [notes, setNotes] = useState("");
-  const [pageLimit, setPageLimit] = useState(String(spend.pageLimit));
+  const [instagram, setInstagram] = useState("");
+  const [tiktok, setTiktok] = useState("");
+  const [facebook, setFacebook] = useState("");
+  const [legalName, setLegalName] = useState("");
+  const [area, setArea] = useState("");
   const [testMode, setTestMode] = useState(spend.defaultTestMode);
   const [testModeTouched, setTestModeTouched] = useState(false);
 
@@ -1478,7 +1467,7 @@ function PresenceAudits({
   }, [spend.defaultTestMode, testModeTouched]);
 
   useEffect(() => {
-    const shouldPoll = runs.some((run) => run.status === "queued" || run.status === "running");
+    const shouldPoll = runs.some((run) => (run.status === "queued" || run.status === "running") && !run.trackingStopped);
     if (!shouldPoll) return undefined;
     const timer = window.setInterval(() => {
       onRefresh().catch(() => undefined);
@@ -1486,24 +1475,23 @@ function PresenceAudits({
     return () => window.clearInterval(timer);
   }, [runs, onRefresh]);
 
-  const usedPercent = spend.capGbp <= 0 ? 100 : Math.min(100, (spend.monthToDateGbp / spend.capGbp) * 100);
+  const usedPercent = spend.capUsd <= 0 ? 100 : Math.min(100, (spend.monthToDateUsd / spend.capUsd) * 100);
   const realBlocked = !spend.realRunsEnabled;
-  const canSubmit = Boolean(businessName.trim() && website.trim() && spend.workerConfigured) && !saving;
-
-  function updateSocial(key: keyof PresenceSocials, value: string) {
-    setSocials((current) => ({ ...current, [key]: value }));
-  }
+  const canSubmit = Boolean(company.trim() && website.trim() && spend.workerConfigured) && !saving;
 
   function submit(event: FormEvent) {
     event.preventDefault();
+    const handles: NonNullable<PresenceRunInput["handles"]> = {};
+    if (instagram.trim()) handles.instagram = instagram.trim();
+    if (tiktok.trim()) handles.tiktok = tiktok.trim();
+    if (facebook.trim()) handles.facebook = facebook.trim();
     onCreate({
-      businessName,
+      company,
       website,
-      socials,
-      location,
-      notes,
+      ...(Object.keys(handles).length > 0 ? { handles } : {}),
+      ...(legalName.trim() ? { business: legalName.trim() } : {}),
+      ...(area.trim() ? { area: area.trim() } : {}),
       testMode,
-      pageLimit: Number(pageLimit),
     }).catch(() => undefined);
   }
 
@@ -1514,12 +1502,13 @@ function PresenceAudits({
           <div>
             <p className="font-sans text-xs font-semibold uppercase tracking-[0.18em] text-coral">This month</p>
             <p className="mt-2 font-serif text-3xl font-bold text-body">
-              {formatGbp(spend.monthToDateGbp)}{" "}
-              <span className="font-sans text-base font-medium text-body/50">of {formatGbp(spend.capGbp)}</span>
+              {formatUsd(spend.monthToDateUsd)}{" "}
+              <span className="font-sans text-base font-medium text-body/50">of {formatUsd(spend.capUsd)}</span>
             </p>
             <p className="mt-2 max-w-2xl font-sans text-sm leading-relaxed text-body/60">
-              Real runs are estimated at {formatGbp(spend.estimatePerRunGbp)} until the worker reports a cost.
-              Free test runs use sample data, cost {formatGbp(0)}, and are never blocked by the cap.
+              A real run reserves {formatUsd(spend.estimatePerRunUsd)} until the worker reports cost in USD.
+              That reservation is released if the run fails, times out, or tracking is stopped, and it is replaced when the worker reports the actual cost.
+              Free test runs use sample data, cost {formatUsd(0)}, and are never blocked by the cap.
             </p>
           </div>
           <button
@@ -1546,35 +1535,16 @@ function PresenceAudits({
         <form onSubmit={submit} className="rounded-lg border border-body/10 bg-cream p-6">
           <h2 className="font-serif text-2xl font-bold text-body">New presence audit</h2>
           <p className="mt-2 font-sans text-sm leading-relaxed text-body/60">
-            Website, social profiles, and a page limit of {spend.pageLimit}. The worker writes the PDF when it finishes.
+            Company and an https website. Instagram, TikTok, and Facebook are optional. A PDF is ready to download only when the audit succeeds.
           </p>
           <div className="mt-7 grid gap-5">
-            <TextField label="Business name" value={businessName} onChange={setBusinessName} />
+            <TextField label="Company" value={company} onChange={setCompany} />
             <TextField label="Website" value={website} onChange={setWebsite} />
-            <TextField label="Instagram" value={socials.instagram} onChange={(value) => updateSocial("instagram", value)} />
-            <TextField label="Facebook" value={socials.facebook} onChange={(value) => updateSocial("facebook", value)} />
-            <TextField label="TikTok" value={socials.tiktok} onChange={(value) => updateSocial("tiktok", value)} />
-            <TextField label="LinkedIn" value={socials.linkedin} onChange={(value) => updateSocial("linkedin", value)} />
-            <TextField label="YouTube" value={socials.youtube} onChange={(value) => updateSocial("youtube", value)} />
-            <TextField label="X" value={socials.x} onChange={(value) => updateSocial("x", value)} />
-            <TextField label="Location" value={location} onChange={setLocation} />
-            <label className="block font-sans text-sm font-medium text-body/70">
-              Notes
-              <textarea
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                rows={4}
-                className="mt-2 block w-full rounded-lg border border-body/15 bg-white px-4 py-3 font-sans text-base text-body focus:border-coral focus:outline-none focus:ring-2 focus:ring-coral/20"
-              />
-            </label>
-            <TextField
-              label="Page limit"
-              type="number"
-              min={1}
-              max={spend.pageLimit}
-              value={pageLimit}
-              onChange={setPageLimit}
-            />
+            <TextField label="Instagram" value={instagram} onChange={setInstagram} />
+            <TextField label="TikTok" value={tiktok} onChange={setTiktok} />
+            <TextField label="Facebook" value={facebook} onChange={setFacebook} />
+            <TextField label="Legal name (optional)" value={legalName} onChange={setLegalName} />
+            <TextField label="Area (optional)" value={area} onChange={setArea} />
             <label className="rounded-lg border border-coral/25 bg-white px-4 py-3">
               <span className="flex items-start gap-3">
                 <input
@@ -1592,7 +1562,7 @@ function PresenceAudits({
                     On by default. The worker stays offline: sample data, no Apify, and no AI charge.
                     {realBlocked
                       ? " Real runs are switched off on this stack until FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true."
-                      : ` Turn this off to start a real audit, estimated at ${formatGbp(spend.estimatePerRunGbp)}.`}
+                      : ` Turn this off to start a real audit, estimated at ${formatUsd(spend.estimatePerRunUsd)}.`}
                   </span>
                 </span>
               </span>
@@ -1631,86 +1601,88 @@ function PresenceAudits({
                   <tr className="border-b border-body/10 font-sans text-xs font-semibold uppercase tracking-[0.14em] text-body/45">
                     <th className="px-6 py-3 font-semibold">Business</th>
                     <th className="px-4 py-3 font-semibold">Status</th>
-                    <th className="px-4 py-3 font-semibold">Progress</th>
+                    <th className="px-4 py-3 font-semibold">Detail</th>
                     <th className="px-4 py-3 font-semibold">Cost</th>
                     <th className="px-4 py-3 font-semibold">Started</th>
                     <th className="px-6 py-3 font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {runs.map((run) => (
-                    <tr key={run.id} className="border-b border-body/10 align-top last:border-b-0">
-                      <td className="px-6 py-4">
-                        <p className="font-serif text-lg font-bold text-body">{run.businessName}</p>
-                        <a
-                          href={run.website}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-1 block max-w-[220px] truncate font-sans text-xs text-body/50 underline-offset-2 hover:text-coral hover:underline"
-                        >
-                          {run.website}
-                        </a>
-                        {run.errorMessage && (
-                          <p className="mt-2 max-w-xs font-sans text-xs leading-relaxed text-coral">{run.errorMessage}</p>
-                        )}
-                      </td>
-                      <td className="px-4 py-4">
-                        <span
-                          className={`inline-flex rounded-full px-3 py-1 font-sans text-xs font-semibold uppercase tracking-[0.12em] ${presenceStatusClass(run.status)}`}
-                        >
-                          {run.status}
-                        </span>
-                        {run.testMode && (
-                          <p className="mt-2 font-sans text-xs text-body/45">Free test</p>
-                        )}
-                      </td>
-                      <td className="px-4 py-4">
-                        <p className="font-sans text-sm text-body">{run.progress}%</p>
-                        <p className="mt-1 max-w-[180px] font-sans text-xs leading-relaxed text-body/45">{run.statusMessage}</p>
-                      </td>
-                      <td className="px-4 py-4">
-                        <p className="font-sans text-sm font-semibold text-body">
-                          {run.costLabel === "Free" ? "Free" : formatGbp(run.estimatedCostGbp)}
-                        </p>
-                        {run.costLabel !== "Free" && (
-                          <p className="mt-1 font-sans text-xs uppercase tracking-[0.12em] text-body/40">{run.costLabel}</p>
-                        )}
-                      </td>
-                      <td className="px-4 py-4 font-sans text-sm text-body/60">{formatDate(run.createdAt)}</td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => onDownload(run)}
-                            disabled={!run.downloadReady || saving}
-                            className="rounded-full border border-body/15 px-3 py-2 font-sans text-xs font-semibold uppercase tracking-[0.12em] text-body/60 transition hover:border-coral hover:text-coral disabled:cursor-not-allowed disabled:opacity-40"
+                  {runs.map((run) => {
+                    const handleLine = [run.handles.instagram, run.handles.tiktok, run.handles.facebook].filter(Boolean).join(" · ");
+                    const open = (run.status === "queued" || run.status === "running") && !run.trackingStopped;
+                    const canRetry = run.status === "failed" || run.status === "cancelled" || run.status === "needs_review";
+                    return (
+                      <tr key={run.id} className="border-b border-body/10 align-top last:border-b-0">
+                        <td className="px-6 py-4">
+                          <p className="font-serif text-lg font-bold text-body">{run.company}</p>
+                          <a
+                            href={run.website}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-1 block max-w-[220px] truncate font-sans text-xs text-body/50 underline-offset-2 hover:text-coral hover:underline"
                           >
-                            Download
-                          </button>
-                          {(run.status === "queued" || run.status === "running") && (
+                            {run.website}
+                          </a>
+                          {handleLine && (
+                            <p className="mt-1 max-w-[220px] truncate font-sans text-xs text-body/45">{handleLine}</p>
+                          )}
+                        </td>
+                        <td className="px-4 py-4">
+                          <span
+                            className={`inline-flex rounded-full px-3 py-1 font-sans text-xs font-semibold uppercase tracking-[0.12em] ${presenceStatusClass(run)}`}
+                          >
+                            {run.statusLabel}
+                          </span>
+                          {run.testMode && (
+                            <p className="mt-2 font-sans text-xs text-body/45">Free test</p>
+                          )}
+                        </td>
+                        <td className="px-4 py-4">
+                          <p className="max-w-[220px] font-sans text-xs leading-relaxed text-body/55">{run.statusMessage}</p>
+                        </td>
+                        <td className="px-4 py-4">
+                          <p className="font-sans text-sm font-semibold text-body">{presenceCostText(run)}</p>
+                          {run.costLabel !== "Free" && (
+                            <p className="mt-1 font-sans text-xs uppercase tracking-[0.12em] text-body/40">{run.costLabel}</p>
+                          )}
+                        </td>
+                        <td className="px-4 py-4 font-sans text-sm text-body/60">{formatDate(run.createdAt)}</td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
-                              onClick={() => onCancel(run)}
-                              disabled={saving}
-                              className="rounded-full border border-coral/25 px-3 py-2 font-sans text-xs font-semibold uppercase tracking-[0.12em] text-coral transition hover:bg-coral hover:text-off-white disabled:opacity-40"
+                              onClick={() => onDownload(run)}
+                              disabled={!run.downloadReady || saving}
+                              className="rounded-full border border-body/15 px-3 py-2 font-sans text-xs font-semibold uppercase tracking-[0.12em] text-body/60 transition hover:border-coral hover:text-coral disabled:cursor-not-allowed disabled:opacity-40"
                             >
-                              Cancel
+                              Download
                             </button>
-                          )}
-                          {(run.status === "failed" || run.status === "cancelled") && (
-                            <button
-                              type="button"
-                              onClick={() => onRetry(run)}
-                              disabled={saving || !spend.workerConfigured}
-                              className="rounded-full border border-body/15 px-3 py-2 font-sans text-xs font-semibold uppercase tracking-[0.12em] text-body/60 transition hover:border-coral hover:text-coral disabled:opacity-40"
-                            >
-                              Retry
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                            {open && (
+                              <button
+                                type="button"
+                                onClick={() => onCancel(run)}
+                                disabled={saving}
+                                className="rounded-full border border-coral/25 px-3 py-2 font-sans text-xs font-semibold uppercase tracking-[0.12em] text-coral transition hover:bg-coral hover:text-off-white disabled:opacity-40"
+                              >
+                                Stop tracking
+                              </button>
+                            )}
+                            {canRetry && (
+                              <button
+                                type="button"
+                                onClick={() => onRetry(run)}
+                                disabled={saving || !spend.workerConfigured}
+                                className="rounded-full border border-body/15 px-3 py-2 font-sans text-xs font-semibold uppercase tracking-[0.12em] text-body/60 transition hover:border-coral hover:text-coral disabled:opacity-40"
+                              >
+                                Retry
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1721,15 +1693,24 @@ function PresenceAudits({
   );
 }
 
-function presenceStatusClass(status: PresenceRun["status"]) {
-  if (status === "completed") return "bg-green-100 text-green-700";
-  if (status === "failed" || status === "cancelled") return "bg-coral/10 text-coral";
-  if (status === "running") return "bg-amber-100 text-amber-800";
+function presenceStatusClass(run: PresenceRun) {
+  if (run.trackingStopped && (run.status === "queued" || run.status === "running")) return "bg-body/10 text-body/55";
+  if (run.status === "succeeded") return "bg-green-100 text-green-700";
+  if (run.status === "needs_review") return "bg-amber-100 text-amber-800";
+  if (run.status === "failed" || run.status === "cancelled") return "bg-coral/10 text-coral";
+  if (run.status === "running") return "bg-amber-100 text-amber-800";
   return "bg-body/10 text-body/55";
 }
 
-function formatGbp(amount: number) {
-  return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(amount);
+function presenceCostText(run: PresenceRun) {
+  if (run.costLabel === "Free") return "Free";
+  if (run.costLabel === "Actual" && typeof run.costUsd === "number") return formatUsd(run.costUsd);
+  if (run.costLabel === "Released") return formatUsd(0);
+  return formatUsd(run.estimatedCostUsd);
+}
+
+function formatUsd(amount: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
 }
 
 function BlogEditor({

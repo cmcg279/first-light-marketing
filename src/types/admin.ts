@@ -155,60 +155,64 @@ export interface AuditReport {
   completedAt?: string;
 }
 
-export interface PresenceSocials {
+export interface PresenceHandles {
   instagram: string;
-  facebook: string;
   tiktok: string;
-  linkedin: string;
-  youtube: string;
-  x: string;
+  facebook: string;
 }
 
-export type PresenceRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type PresenceRunStatus = "queued" | "running" | "succeeded" | "needs_review" | "failed" | "cancelled";
+export type PresenceStatusLabel = "Queued" | "Running" | "Completed" | "Needs review" | "Failed" | "Cancelled" | "Not tracked";
 export type PresenceCostLabel = "Free" | "Estimated" | "Actual" | "Released";
 
 export interface PresenceRun {
   id: string;
-  businessName: string;
+  businessId: string;
+  company: string;
   website: string;
-  socials: PresenceSocials;
-  location: string;
-  notes: string;
+  handles: PresenceHandles;
+  business: string;
+  area: string;
   testMode: boolean;
-  pageLimit: number;
   status: PresenceRunStatus;
-  progress: number;
+  statusLabel: PresenceStatusLabel;
+  completed: boolean;
+  errorCode?: string;
+  errorMessage?: string;
+  qualityFailures: string[];
   statusMessage: string;
   fileName: string;
-  errorMessage?: string;
-  estimatedCostGbp: number;
+  estimatedCostUsd: number;
+  costUsd?: number;
   costLabel: PresenceCostLabel;
-  attempts: number;
+  trackingStopped: boolean;
   createdAt: string;
   updatedAt: string;
-  completedAt?: string;
+  finishedAt?: string;
   downloadReady: boolean;
 }
 
 export interface PresenceSpendSummary {
   month: string;
-  monthToDateGbp: number;
-  capGbp: number;
-  estimatePerRunGbp: number;
+  monthToDateUsd: number;
+  capUsd: number;
+  estimatePerRunUsd: number;
   realRunsEnabled: boolean;
   workerConfigured: boolean;
   defaultTestMode: boolean;
-  pageLimit: number;
 }
 
 export interface PresenceRunInput {
-  businessName: string;
+  company: string;
   website: string;
-  socials: PresenceSocials;
-  location: string;
-  notes: string;
+  handles?: {
+    instagram?: string;
+    tiktok?: string;
+    facebook?: string;
+  };
+  business?: string;
+  area?: string;
   testMode: boolean;
-  pageLimit: number;
 }
 
 export interface AdminLead {

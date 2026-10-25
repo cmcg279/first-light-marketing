@@ -461,7 +461,7 @@ export async function handler(event: LambdaFunctionUrlEvent) {
         path,
         body: event.body,
         config: loadPresenceConfig(process.env),
-        authorize: () => requireAuth(event),
+        authorize: () => presenceRequestedBy(event),
         store: createAwsPresenceStore(),
       });
       return response(result.statusCode, result.body);
@@ -1617,9 +1617,15 @@ function normalizeOptionalUrl(value: unknown, label: string) {
 }
 
 async function requireAuth(event: LambdaFunctionUrlEvent) {
-  if (!cognitoIssuer || !(await verifyCognitoToken(bearerToken(event)))) {
-    throw new AuthError(401, "Please log in again.");
-  }
+  await presenceRequestedBy(event);
+}
+
+async function presenceRequestedBy(event: LambdaFunctionUrlEvent) {
+  const identity = cognitoIssuer ? await verifyCognitoToken(bearerToken(event)) : null;
+  if (!identity) throw new AuthError(401, "Please log in again.");
+  const raw = (identity.email || identity.username).trim();
+  const safe = raw.replace(/[^\w.@+-]/g, "").slice(0, 180);
+  return safe ? `admin:${safe}` : "admin";
 }
 
 function requireRunnerAuth(event: LambdaFunctionUrlEvent) {
@@ -1678,11 +1684,11 @@ function isPermittedBrowserOrigin(value: string) {
   );
 }
 
-async function verifyCognitoToken(token: string) {
+async function verifyCognitoToken(token: string): Promise<{ username: string; email: string } | null> {
   const [headerRaw, payloadRaw, signatureRaw] = token.split(".");
 
   if (!headerRaw || !payloadRaw || !signatureRaw || !cognitoIssuer) {
-    return false;
+    return null;
   }
 
   try {
@@ -1693,6 +1699,9 @@ async function verifyCognitoToken(token: string) {
       token_use?: string;
       client_id?: string;
       aud?: string;
+      username?: string;
+      email?: string;
+      "cognito:username"?: string;
     };
 
     if (
@@ -1703,18 +1712,18 @@ async function verifyCognitoToken(token: string) {
       payload.exp <= Math.floor(Date.now() / 1000) ||
       !["access", "id"].includes(payload.token_use || "")
     ) {
-      return false;
+      return null;
     }
 
     const tokenClientId = payload.client_id || payload.aud;
     const expectedClientId = await getExpectedClientId();
     if (!expectedClientId || tokenClientId !== expectedClientId) {
-      return false;
+      return null;
     }
 
     const keys = await getJwks();
     const jwk = keys.find((key) => key.kid === header.kid);
-    if (!jwk) return false;
+    if (!jwk) return null;
 
     const key = await crypto.subtle.importKey(
       "jwk",
@@ -1724,15 +1733,20 @@ async function verifyCognitoToken(token: string) {
       ["verify"],
     );
 
-    return crypto.subtle.verify(
+    const verified = await crypto.subtle.verify(
       "RSASSA-PKCS1-v1_5",
       key,
       base64UrlDecode(signatureRaw),
       Buffer.from(`${headerRaw}.${payloadRaw}`),
     );
+    if (!verified) return null;
+
+    const username = typeof payload["cognito:username"] === "string" ? payload["cognito:username"] : payload.username || "";
+    const email = typeof payload.email === "string" ? payload.email : "";
+    return { username, email };
   } catch (error) {
     console.error("Cognito token verification failed:", error);
-    return false;
+    return null;
   }
 }
 
