@@ -1,11 +1,14 @@
 import { DynamoDBClient, TransactionCanceledException } from "@aws-sdk/client-dynamodb";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { GetObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { DynamoDBDocumentClient, GetCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
+  PRESENCE_LOCK_PK,
+  PRESENCE_LOCK_SK,
   PRESENCE_SPEND_PK,
   PresenceError,
+  RUN_TIMEOUT_MS,
   runFromItem,
   runLookupQuery,
   runToItem,
@@ -32,6 +35,8 @@ export function createAwsPresenceStore(): PresenceStore {
     monthSpendCents: (month) => monthSpendCents(tableName, month),
     insertRun: (run, reservation) => insertRun(tableName, run, reservation),
     saveRun: (run, reservation, claim) => saveRun(tableName, run, reservation, claim),
+    acquireRunLock: (runId, now) => acquireRunLock(tableName, runId, now),
+    releaseRunLock: (runId) => releaseRunLock(tableName, runId),
     readObject: (key) => readObject(bucket, key),
     pdfExists: (key) => pdfExists(bucket, key),
     invoke: (payload) => invokeWorker(payload),
@@ -192,6 +197,47 @@ function spendChange(tableName: string, reservation: SpendReservation) {
   };
 }
 
+async function acquireRunLock(tableName: string, runId: string, now: Date) {
+  const expiresMs = now.getTime() + RUN_TIMEOUT_MS;
+  try {
+    await db.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: {
+          PK: PRESENCE_LOCK_PK,
+          SK: PRESENCE_LOCK_SK,
+          entityType: "PRESENCE_LOCK",
+          holder: runId,
+          expiresAt: new Date(expiresMs).toISOString(),
+          ttl: Math.floor(expiresMs / 1000),
+        },
+        ConditionExpression: "attribute_not_exists(PK) OR expiresAt < :now OR holder = :holder",
+        ExpressionAttributeValues: { ":now": now.toISOString(), ":holder": runId },
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (isConditionalCheck(error)) return false;
+    throw error;
+  }
+}
+
+async function releaseRunLock(tableName: string, runId: string) {
+  try {
+    await db.send(
+      new DeleteCommand({
+        TableName: tableName,
+        Key: { PK: PRESENCE_LOCK_PK, SK: PRESENCE_LOCK_SK },
+        ConditionExpression: "holder = :holder",
+        ExpressionAttributeValues: { ":holder": runId },
+      }),
+    );
+  } catch (error) {
+    if (isConditionalCheck(error)) return;
+    throw error;
+  }
+}
+
 async function readObject(bucket: string, key: string) {
   try {
     const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
@@ -271,6 +317,10 @@ function isMissingObject(error: unknown) {
   const name = (error as { name?: string }).name;
   const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
   return status === 404 || name === "NoSuchKey" || name === "NotFound";
+}
+
+function isConditionalCheck(error: unknown) {
+  return Boolean(error && typeof error === "object" && (error as { name?: string }).name === "ConditionalCheckFailedException");
 }
 
 function isConditionalFailure(error: unknown) {

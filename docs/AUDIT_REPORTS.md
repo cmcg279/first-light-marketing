@@ -98,7 +98,15 @@ Real runs also require `FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true` on the deploy.
 
 ### Cancel
 
-The worker has no cancel. **Stop tracking** sets `flTracked=false` and releases the reservation immediately, including while a real job is still running. It does not write a cancel file and it does not overwrite the worker's status. The tab says tracking stopped and that spend may already be committed. Until `result.json` arrives, that run is not in the month total, so the cap can be understated. If the worker later reports `cost_usd`, that actual cost replaces the released estimate.
+The worker has no cancel. **Stop tracking** sets `flTracked=false` and releases the reservation immediately, including while a real job is still running. It does not write a cancel file and it does not overwrite the worker's status. The tab says tracking stopped and that spend may already be committed. Until `result.json` arrives, that run is not in the month total, so the cap can be understated. If the worker later reports `cost_usd`, that actual cost replaces the released estimate. Stopping tracking also releases the one-run lock, so another audit can be started while that worker may still be executing.
+
+### One run at a time
+
+A new real or test run is refused while another is still queued or running. The API returns `A run is already in progress.` and the Presence tab shows that sentence. A queued or running run older than 16 minutes is marked failed with `timeout`, and its reservation is released, before that check. It does not block the next run.
+
+The race control is a conditional put of `PK=LOCK#presence-audit`, `SK=LOCK`, allowed when the item is missing or its `expiresAt` is in the past. `expiresAt` and the numeric `ttl` are 16 minutes after the run is accepted. The table's TTL attribute is `ttl`, so DynamoDB can delete the lock later. The condition does not wait for that deletion, which can lag. The lock is deleted when the run succeeds, needs review, fails, times out, or tracking is stopped.
+
+Open runs are read from `GSI1`, which is eventually consistent, so two creates in the same moment can both miss a row that was just written. The lock condition is what stops the second insert. AdminFn already has read and write on the table. The worker's `UpdateItem` is limited to keys starting with `BIZ#`, so it cannot write the lock.
 
 Retry creates a new ULID and sets `options.compare_to_run_id` to the previous run. It does not reuse the run id.
 

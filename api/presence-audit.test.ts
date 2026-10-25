@@ -327,8 +327,12 @@ describe("presence audit API", () => {
   it("blocks a real run past the cap and still allows a free test", async () => {
     const store = memoryStore();
     const config = testConfig({ realRunsEnabled: true, capUsd: 10, estimateUsd: 5 });
-    assert.equal((await postRun(store, { ...validBody(), company: "One Co", testMode: false }, config)).statusCode, 200);
-    assert.equal((await postRun(store, { ...validBody(), company: "Two Co", testMode: false }, config)).statusCode, 200);
+    const first = await postRun(store, { ...validBody(), company: "One Co", testMode: false }, config);
+    assert.equal(first.statusCode, 200);
+    await finishSucceeded(store, (first.body as { run: { id: string } }).run.id, config);
+    const second = await postRun(store, { ...validBody(), company: "Two Co", testMode: false }, config);
+    assert.equal(second.statusCode, 200);
+    await finishSucceeded(store, (second.body as { run: { id: string } }).run.id, config);
     const blocked = await postRun(store, { ...validBody(), company: "Three Co", testMode: false }, config);
     assert.equal(blocked.statusCode, 409);
     assert.match((blocked.body as { error: string }).error, /\$10\.00 of the \$10\.00 cap/);
@@ -375,6 +379,55 @@ describe("presence audit API", () => {
     assert.equal(body.run.costLabel, "Released");
     assert.equal(await store.monthSpendCents("2026-10"), 0);
     assert.equal(store.objects.has(`runs/harbour-cafe/${id}/cancel.json`), false);
+    const next = await postRun(store, { ...validBody(), company: "Second Co", testMode: true }, config);
+    assert.equal(next.statusCode, 200);
+  });
+
+  it("refuses a second run while one is queued or running", async () => {
+    const store = memoryStore();
+    const config = testConfig();
+    assert.equal((await postRun(store, validBody(), config)).statusCode, 200);
+    const blocked = await postRun(store, { ...validBody(), company: "Second Co", testMode: false }, testConfig({ realRunsEnabled: true }));
+    assert.equal(blocked.statusCode, 409);
+    assert.equal((blocked.body as { error: string }).error, "A run is already in progress.");
+    assert.equal(store.inserts, 1);
+    assert.equal(await store.monthSpendCents("2026-10"), 0);
+  });
+
+  it("allows a new run when the previous one is older than 16 minutes and releases that reservation", async () => {
+    const store = memoryStore();
+    const config = testConfig({ realRunsEnabled: true });
+    const created = await postRun(store, { ...validBody(), testMode: false }, config);
+    const id = (created.body as { run: { id: string } }).run.id;
+    const stored = await store.getRun(id);
+    assert.ok(stored);
+    stored.startedAt = new Date(NOW.getTime() - RUN_TIMEOUT_MS - 1000).toISOString();
+    await store.saveRun(stored, null, null);
+
+    const next = await postRun(store, { ...validBody(), company: "Second Co", testMode: false }, config);
+    assert.equal(next.statusCode, 200);
+    const first = await store.getRun(id);
+    assert.equal(first?.status, "failed");
+    assert.equal(first?.errorCode, "timeout");
+    assert.equal(await store.monthSpendCents("2026-10"), 600);
+  });
+
+  it("allows a new run after the previous one succeeds or fails", async () => {
+    const store = memoryStore();
+    const config = testConfig({ realRunsEnabled: true });
+    const created = await postRun(store, { ...validBody(), testMode: false }, config);
+    const id = (created.body as { run: { id: string } }).run.id;
+    await finishSucceeded(store, id, config);
+    const afterSuccess = await postRun(store, { ...validBody(), company: "Second Co", testMode: false }, config);
+    assert.equal(afterSuccess.statusCode, 200);
+
+    const failedStore = memoryStore();
+    failedStore.invokePayload = { status: "failed", error: { code: "website_unreachable", message: "no answer" } };
+    const failed = await postRun(failedStore, { ...validBody(), testMode: false }, config);
+    assert.equal(failed.statusCode, 200);
+    assert.equal((failed.body as { run: { status: string } }).run.status, "failed");
+    const afterFailure = await postRun(failedStore, { ...validBody(), company: "Third Co", testMode: true }, config);
+    assert.equal(afterFailure.statusCode, 200);
   });
 
   it("returns 503 and does not reserve spend when the worker is not deployed", async () => {
@@ -411,6 +464,7 @@ describe("presence audit API", () => {
     const sent = store.invocations.at(-1) as WorkerJob;
     assert.equal(sent.options.compare_to_run_id, failed?.id);
     assert.equal(await store.monthSpendCents("2026-10"), 500);
+    await finishSucceeded(store, retryBody.run.id, config);
 
     const blocked = await postRun(store, { ...validBody(), company: "Second Co", testMode: false }, config);
     assert.equal(blocked.statusCode, 409);
@@ -563,6 +617,29 @@ function testConfig(overrides: Partial<PresenceConfig> = {}): PresenceConfig {
   };
 }
 
+async function finishSucceeded(
+  store: ReturnType<typeof memoryStore>,
+  id: string,
+  config: PresenceConfig,
+) {
+  const run = await store.getRun(id);
+  assert.ok(run);
+  store.objects.set(resultObjectKey(run), {
+    status: "succeeded",
+    quality_gate: { passed: true, failures: [] },
+    artifacts: { pdf: pdfObjectKey(run) },
+  });
+  const response = await handlePresenceRequest({
+    method: "GET",
+    path: `/api/admin/presence/runs/${id}`,
+    config,
+    now: NOW,
+    authorize: allow,
+    store,
+  });
+  assert.equal((response.body as { run: { status: string } }).run.status, "succeeded");
+}
+
 async function postRun(store: PresenceStore, body: unknown, config: PresenceConfig) {
   return handlePresenceRequest({
     method: "POST",
@@ -619,6 +696,7 @@ function memoryStore(): PresenceStore & {
 } {
   const runs = new Map<string, PresenceRun>();
   const spend = new Map<string, number>();
+  let lock: { holder: string; expiresAt: string } | null = null;
   const objects = new Map<string, unknown>();
   const pdfs = new Set<string>();
   const store = {
@@ -668,6 +746,15 @@ function memoryStore(): PresenceStore & {
     },
     async presign(key: string, downloadName: string) {
       return `https://downloads.invalid/${encodeURIComponent(key)}?name=${encodeURIComponent(downloadName)}`;
+    },
+    async acquireRunLock(runId: string, now: Date) {
+      const expiresAt = new Date(now.getTime() + RUN_TIMEOUT_MS).toISOString();
+      if (lock && lock.expiresAt >= now.toISOString() && lock.holder !== runId) return false;
+      lock = { holder: runId, expiresAt };
+      return true;
+    },
+    async releaseRunLock(runId: string) {
+      if (lock?.holder === runId) lock = null;
     },
   };
   return store;

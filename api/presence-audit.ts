@@ -12,6 +12,9 @@
 import { randomBytes } from "node:crypto";
 
 export const PRESENCE_SPEND_PK = "PRESENCE_SPEND";
+export const PRESENCE_LOCK_PK = "LOCK#presence-audit";
+export const PRESENCE_LOCK_SK = "LOCK";
+export const IN_PROGRESS_MESSAGE = "A run is already in progress.";
 export const RUNS_INDEX = "GSI1";
 export const RUNS_PARTITION = "RUNS";
 export const DEFAULT_MONTHLY_CAP_USD = 65;
@@ -179,6 +182,8 @@ export interface PresenceStore {
   monthSpendCents(month: string): Promise<number>;
   insertRun(run: PresenceRun, reservation: SpendReservation | null): Promise<void>;
   saveRun(run: PresenceRun, reservation: SpendReservation | null, claim: PortalClaim | null): Promise<void>;
+  acquireRunLock(runId: string, now: Date): Promise<boolean>;
+  releaseRunLock(runId: string): Promise<void>;
   readObject(key: string): Promise<Record<string, unknown> | null>;
   pdfExists(key: string): Promise<boolean>;
   invoke(payload: WorkerJob): Promise<InvokeOutcome>;
@@ -713,6 +718,9 @@ async function createRun(input: PresenceRequest, now: Date, requestedBy: string,
   const id = (input.newId ?? newRunId)(now.getTime());
   if (!ULID.test(id)) throw new PresenceError(500, "Could not allocate a run id.");
   const businessId = requested.businessId;
+  await settleStaleRuns(input, now);
+  if (await runInProgress(input, now)) throw new PresenceError(409, IN_PROGRESS_MESSAGE);
+
   const reserveCents = requested.testMode ? 0 : input.config.estimateCents;
   const spent = await input.store.monthSpendCents(month);
   if (capBlocks(spent, reserveCents, input.config.capCents)) throw new PresenceError(409, capMessage(input.config, spent));
@@ -742,16 +750,24 @@ async function createRun(input: PresenceRequest, now: Date, requestedBy: string,
   validateJob(workerPayload(run));
 
   const reservation = reserveCents > 0 ? reserve(month, reserveCents, input.config.capCents) : null;
+  if (!(await input.store.acquireRunLock(id, now))) throw new PresenceError(409, IN_PROGRESS_MESSAGE);
   try {
-    await input.store.insertRun(run, reservation);
+    try {
+      await input.store.insertRun(run, reservation);
+    } catch (error) {
+      if (asHttpError(error)?.statusCode === 409) throw new PresenceError(409, capMessage(input.config, spent));
+      throw error;
+    }
+
+    const started = await dispatch(input, run, reservation, now);
+    await releaseLockIfFinished(input, started);
+    const latestSpend = await input.store.monthSpendCents(month);
+    return json(200, { run: publicRun(started), spend: spendSummary(input.config, month, latestSpend) });
   } catch (error) {
-    if (asHttpError(error)?.statusCode === 409) throw new PresenceError(409, capMessage(input.config, spent));
+    const current = await input.store.getRun(id).catch(() => null);
+    if (!current || isTerminal(current.status) || current.trackingStopped) await input.store.releaseRunLock(id);
     throw error;
   }
-
-  const started = await dispatch(input, run, reservation, now);
-  const latestSpend = await input.store.monthSpendCents(month);
-  return json(200, { run: publicRun(started), spend: spendSummary(input.config, month, latestSpend) });
 }
 
 async function downloadRun(input: PresenceRequest, id: string, now: Date) {
@@ -781,6 +797,7 @@ async function cancelRun(input: PresenceRequest, id: string, now: Date) {
     next.costSource = "released";
   }
   await input.store.saveRun(next, reservation, null);
+  await input.store.releaseRunLock(current.id);
   const spent = await input.store.monthSpendCents(current.month);
   return json(200, { run: publicRun(next), spend: spendSummary(input.config, current.month, spent) });
 }
@@ -875,6 +892,7 @@ async function persistProjection(input: PresenceRequest, projected: Projection) 
       : null;
   try {
     await input.store.saveRun(projected.run, reservation, projected.claim);
+    await releaseLockIfFinished(input, projected.run);
     return projected.run;
   } catch (error) {
     if (projected.claim && asHttpError(error)?.statusCode === 409) {
@@ -890,10 +908,37 @@ async function persistProjection(input: PresenceRequest, projected: Projection) 
           capCents: input.config.capCents,
         }, null);
       }
+      await releaseLockIfFinished(input, again.run);
       return again.run;
     }
     throw error;
   }
+}
+
+async function settleStaleRuns(input: PresenceRequest, now: Date) {
+  for (const run of await input.store.listRuns()) {
+    if (run.trackingStopped || (run.status !== "queued" && run.status !== "running")) continue;
+    const started = Date.parse(run.startedAt || run.createdAt);
+    if (Number.isFinite(started) && now.getTime() - started > RUN_TIMEOUT_MS) {
+      await refreshRun(input, run, now, true);
+    }
+  }
+}
+
+async function runInProgress(input: PresenceRequest, now: Date) {
+  const runs = await input.store.listRuns();
+  return runs.some((run) => isBlocking(run, now));
+}
+
+function isBlocking(run: PresenceRun, now: Date) {
+  if (run.trackingStopped) return false;
+  if (run.status !== "queued" && run.status !== "running") return false;
+  const started = Date.parse(run.startedAt || run.createdAt);
+  return !Number.isFinite(started) || now.getTime() - started <= RUN_TIMEOUT_MS;
+}
+
+async function releaseLockIfFinished(input: PresenceRequest, run: PresenceRun) {
+  if (isTerminal(run.status) || run.trackingStopped) await input.store.releaseRunLock(run.id);
 }
 
 async function requireRun(input: PresenceRequest, id: string) {

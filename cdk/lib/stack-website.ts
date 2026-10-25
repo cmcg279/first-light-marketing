@@ -86,6 +86,8 @@ export class WebsiteStack extends cdk.Stack {
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: !isDev,
       },
+      // Only items that set a numeric ttl are removed. The presence-audit lock is the one that does.
+      timeToLiveAttribute: "ttl",
       removalPolicy,
     });
     // The worker's status rows use this index (GSI1PK="RUNS", GSI1SK=<started_at>#<run_id>).
