@@ -74,16 +74,16 @@ export FIRST_LIGHT_AUDIT_RUNNER_TOKEN="the-existing-runner-token"  # required on
 
 ### Online presence audits (optional)
 
-Leave these unset for a normal production deploy. The audit worker, its role, and the Apify secret are created only when an image tag is set. Without that tag the stack does not gain a Lambda, and the table, buckets, and user pool are not replaced. AdminFn does gain the cap settings below so the Presence tab can enforce them once a worker exists.
+Leave these unset for a normal production deploy. The audit worker, its role, and the social-audit JSON secret are created only when an image tag is set. Without that tag the stack does not gain a Lambda. The table, buckets, and user pool are not replaced. The existing table does gain `GSI1` (`GSI1PK` / `GSI1SK`) so presence runs can be listed without a scan. That index update is in place. AdminFn also gains the USD cap settings below.
 
 ```bash
 export FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG=""          # empty skips the worker
 export FIRST_LIGHT_AUDIT_WORKER_IMAGE_REPO="first-light-audit-worker"
-export FIRST_LIGHT_AUDIT_MONTHLY_CAP_GBP="50"         # real runs only
-export FIRST_LIGHT_AUDIT_RUN_COST_ESTIMATE_GBP="5"    # used when the worker does not report a cost
+export FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD="65"         # real runs only, compared with cost_usd
+export FIRST_LIGHT_AUDIT_RUN_COST_ESTIMATE_USD="6"    # released on failure, timeout, or cancel; replaced by cost_usd
 ```
 
-Do not export `FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true` until a dev test run has been checked. Real mode is off unless that value is exactly `true`. Dev and production both default the worker to free test mode. The full build, push, and dev test steps are in [AUDIT_REPORTS.md](AUDIT_REPORTS.md). Do not put an Apify token or an AI key in the environment.
+Do not export `FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true` until a dev test run has been checked. Real mode is off unless that value is exactly `true`. While it is off, the worker gets `SOCIAL_AUDIT_TEST_MODE=1`. Dev and production both default the worker to free test mode. The full build, push, and dev test steps are in [AUDIT_REPORTS.md](AUDIT_REPORTS.md). Do not put an Apify token or an AI key in the environment. The worker secret is one JSON object (`APIFY_TOKEN`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) created empty when the image tag is set.
 
 MFA and the Lambda runtime have their own switches. Leave them unset for the first production deploy. `cdk.json` defaults are `mfa=optional` and `lambdaRuntime=nodejs20.x`. The environment variable wins when it is set.
 
@@ -238,7 +238,7 @@ Read the diff before approving anything. All of the following must be true:
 - `AWS::Cognito::UserPoolDomain` (`AdminUserPoolDomain`) shows no change. The domain prefix is the same.
 - `AWS::Cognito::UserPoolClient` shows no change. Callback URLs, logout URLs, and the client id stay as they are. If the diff adds or removes a URL, fix the environment variables above and run the diff again. Do not deploy a client change in phase 1.
 - The DynamoDB table, site bucket, media bucket, audit-report bucket, and user pool are not replaced. A replacement shows the resource being destroyed and created again.
-- With `FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG` unset, there is no `AuditWorkerFn`, no Apify secret, and no new bucket. AdminFn may show new environment variables for the presence-audit cap. That is an update, not a new table.
+- With `FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG` unset, there is no `AuditWorkerFn`, no `SocialAuditSecret`, and no new bucket. AdminFn may show new environment variables for the USD presence-audit cap (`AUDIT_MONTHLY_CAP_USD` default 65, `AUDIT_RUN_COST_ESTIMATE_USD` default 6). The existing table may gain `GSI1`. That is an in-place index update, not a new table and not a replacement.
 
 Phase 1 may still change Lambda code, function URL auth, the distribution, headers, and alarms. Those are in place. Phase 2's diff should be the user pool MFA setting moving from optional to required, and nothing else.
 
