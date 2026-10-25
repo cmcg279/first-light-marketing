@@ -12,7 +12,7 @@
     "build:aws": "VITE_BASE_PATH=/ npm run build",
     "build:github": "VITE_BASE_PATH=/first-light-marketing/ npm run build",
     "preview": "vite preview",
-    "test": "tsx --test api/presence-audit.test.ts",
+    "test": "tsx --test api/presence-audit.test.ts api/audit-worker-invoke.test.ts",
     "deploy": "npm run build:aws && npm -w cdk run deploy",
     "deploy:dev": "npm run build:aws && STAGE=dev npm -w cdk run deploy",
     "deploy:staging": "VITE_BASE_PATH=/ npm run build && STAGE=staging npm -w cdk run deploy"

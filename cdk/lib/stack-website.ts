@@ -651,6 +651,12 @@ interface PresenceAuditProps {
   alarmTopic: sns.ITopic;
 }
 
+// Async invoke policy for AuditWorkerFn. Maximum event age is Lambda's 60 second minimum.
+const auditWorkerAsyncInvoke = {
+  retryAttempts: 0,
+  maxEventAge: cdk.Duration.minutes(1),
+};
+
 function addPresenceAudit(stack: cdk.Stack, props: PresenceAuditProps) {
   const capUsd = moneySetting(stack, "FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD", "auditMonthlyCapUsd", 65, 0);
   const estimateUsd = moneySetting(
@@ -732,6 +738,10 @@ function addPresenceAudit(stack: cdk.Stack, props: PresenceAuditProps) {
     ephemeralStorageSize: cdk.Size.mebibytes(ephemeralMb),
     reservedConcurrentExecutions: reservedConcurrency,
     description: "First Light online presence audit worker. social_audit.job.handler. Test mode does not call Apify or AI.",
+    // Reserved concurrency is 1. Lambda's default async policy would retry an error
+    // twice and hold a throttled event for up to six hours. A late retry would spend
+    // Apify money after the portal had already marked the run failed and released the cap.
+    ...auditWorkerAsyncInvoke,
     environment: {
       AUDIT_REPORTS_BUCKET_NAME: props.auditReportsBucket.bucketName,
       AUDIT_REPORTS_PREFIX: "",
