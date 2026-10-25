@@ -20,7 +20,7 @@ Top-level keys only: `schema`, `run_id`, `business_id`, `requested_by`, `kind`, 
 | `company` | Required, at most 120 characters |
 | `website` | Required `https://` URL. No credentials, no IP address, no `localhost`, no host without a dot, no `.local` / `.internal` / `.localhost`, port empty or 443, length at most 300 |
 | `handles` | Optional `instagram`, `tiktok`, and `facebook` only. LinkedIn, YouTube, and X are rejected |
-| `brand` | `first_light` |
+| `brand` | `first_light`. `BRAND_IDS` in `api/presence-audit.ts` (`first_light`, `example_brand`) must stay the same as the `brands:` entries in the worker's `social_audit/brands.yaml` |
 | `options` | Optional legal name (`business`, ≤200), area (`competitors.area`, ≤60), and on retry `compare_to_run_id` of the previous run |
 | `test_mode` | The free-test checkbox |
 
@@ -98,7 +98,7 @@ Real runs also require `FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true` on the deploy.
 
 ### Cancel
 
-The worker has no cancel. **Stop tracking** sets `flTracked=false` and releases the reservation. It does not write a cancel file and it does not overwrite the worker's status. The tab says tracking stopped and that spend may already be committed. If the worker later reports `cost_usd`, that actual cost replaces the released estimate.
+The worker has no cancel. **Stop tracking** sets `flTracked=false` and releases the reservation immediately, including while a real job is still running. It does not write a cancel file and it does not overwrite the worker's status. The tab says tracking stopped and that spend may already be committed. Until `result.json` arrives, that run is not in the month total, so the cap can be understated. If the worker later reports `cost_usd`, that actual cost replaces the released estimate.
 
 Retry creates a new ULID and sets `options.compare_to_run_id` to the previous run. It does not reuse the run id.
 
