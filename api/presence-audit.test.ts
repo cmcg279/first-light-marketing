@@ -379,8 +379,57 @@ describe("presence audit API", () => {
     assert.equal(body.run.costLabel, "Released");
     assert.equal(await store.monthSpendCents("2026-10"), 0);
     assert.equal(store.objects.has(`runs/harbour-cafe/${id}/cancel.json`), false);
-    const next = await postRun(store, { ...validBody(), company: "Second Co", testMode: true }, config);
-    assert.equal(next.statusCode, 200);
+  });
+
+  it("refuses a new run after stop-tracking until the worker finishes or 16 minutes pass", async () => {
+    const config = testConfig({ realRunsEnabled: true });
+    const store = memoryStore();
+    const created = await postRun(store, { ...validBody(), testMode: false }, config);
+    const id = (created.body as { run: { id: string } }).run.id;
+    const cancelled = await handlePresenceRequest({
+      method: "POST",
+      path: `/api/admin/presence/runs/${id}/cancel`,
+      config,
+      now: NOW,
+      authorize: allow,
+      store,
+    });
+    assert.equal(cancelled.statusCode, 200);
+    const blocked = await postRun(store, { ...validBody(), company: "Second Co", testMode: true }, config);
+    assert.equal(blocked.statusCode, 409);
+    assert.equal((blocked.body as { error: string }).error, "A run is already in progress.");
+    assert.equal(store.inserts, 1);
+
+    const stored = await store.getRun(id);
+    assert.ok(stored);
+    stored.status = "succeeded";
+    stored.finishedAt = NOW.toISOString();
+    await store.saveRun(stored, null, null);
+    const afterTerminal = await postRun(store, { ...validBody(), company: "Second Co", testMode: true }, config);
+    assert.equal(afterTerminal.statusCode, 200);
+
+    const aged = memoryStore();
+    const first = await postRun(aged, { ...validBody(), testMode: false }, config);
+    const agedId = (first.body as { run: { id: string } }).run.id;
+    const stopped = await handlePresenceRequest({
+      method: "POST",
+      path: `/api/admin/presence/runs/${agedId}/cancel`,
+      config,
+      now: NOW,
+      authorize: allow,
+      store: aged,
+    });
+    assert.equal(stopped.statusCode, 200);
+    const row = await aged.getRun(agedId);
+    assert.ok(row);
+    row.startedAt = new Date(NOW.getTime() - RUN_TIMEOUT_MS - 1000).toISOString();
+    await aged.saveRun(row, null, null);
+    const afterTimeout = await postRun(aged, { ...validBody(), company: "Later Co", testMode: false }, config);
+    assert.equal(afterTimeout.statusCode, 200);
+    const timedOut = await aged.getRun(agedId);
+    assert.equal(timedOut?.status, "failed");
+    assert.equal(timedOut?.errorCode, "timeout");
+    assert.equal(await aged.monthSpendCents("2026-10"), 600);
   });
 
   it("refuses a second run while one is queued or running", async () => {

@@ -78,7 +78,7 @@ const ERROR_TEXT: Record<string, string> = {
   start_failed: "The audit worker could not be started.",
 };
 const TRACKING_STOPPED =
-  "Tracking stopped. The worker has no cancel, so this audit may still be running and the spend may already be committed.";
+  "Tracking stopped. The worker has no cancel, so this audit may still be running and the spend may already be committed. Another audit cannot start until this one finishes or 16 minutes have passed.";
 
 export type PortalClaim = "timeout" | "bad_input" | "start_failed";
 export type PresenceStatus = "queued" | "running" | "succeeded" | "needs_review" | "failed" | "cancelled";
@@ -775,7 +775,7 @@ async function createRun(input: PresenceRequest, now: Date, requestedBy: string,
     return json(200, { run: publicRun(started), spend: spendSummary(input.config, month, latestSpend) });
   } catch (error) {
     const current = await input.store.getRun(id).catch(() => null);
-    if (!current || isTerminal(current.status) || current.trackingStopped) await input.store.releaseRunLock(id);
+    if (!current || isTerminal(current.status)) await input.store.releaseRunLock(id);
     throw error;
   }
 }
@@ -807,7 +807,6 @@ async function cancelRun(input: PresenceRequest, id: string, now: Date) {
     next.costSource = "released";
   }
   await input.store.saveRun(next, reservation, null);
-  await input.store.releaseRunLock(current.id);
   const spent = await input.store.monthSpendCents(current.month);
   return json(200, { run: publicRun(next), spend: spendSummary(input.config, current.month, spent) });
 }
@@ -930,7 +929,7 @@ async function persistProjection(input: PresenceRequest, projected: Projection) 
 
 async function settleStaleRuns(input: PresenceRequest, now: Date) {
   for (const run of await input.store.listRuns()) {
-    if (run.trackingStopped || (run.status !== "queued" && run.status !== "running")) continue;
+    if (run.status !== "queued" && run.status !== "running") continue;
     const started = Date.parse(run.startedAt || run.createdAt);
     if (Number.isFinite(started) && now.getTime() - started > RUN_TIMEOUT_MS) {
       await refreshRun(input, run, now, true);
@@ -944,7 +943,6 @@ async function runInProgress(input: PresenceRequest, now: Date) {
 }
 
 function isBlocking(run: PresenceRun, now: Date) {
-  if (run.trackingStopped) return false;
   if (run.status !== "queued" && run.status !== "running") return false;
   const started = Date.parse(run.startedAt || run.createdAt);
   return !Number.isFinite(started) || now.getTime() - started <= RUN_TIMEOUT_MS;

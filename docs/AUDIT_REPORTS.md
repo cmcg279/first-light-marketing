@@ -98,15 +98,17 @@ Real runs also require `FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true` on the deploy.
 
 ### Cancel
 
-The worker has no cancel. **Stop tracking** sets `flTracked=false` and releases the reservation immediately, including while a real job is still running. It does not write a cancel file and it does not overwrite the worker's status. The tab says tracking stopped and that spend may already be committed. Until `result.json` arrives, that run is not in the month total, so the cap can be understated. If the worker later reports `cost_usd`, that actual cost replaces the released estimate. Stopping tracking also releases the one-run lock, so another audit can be started while that worker may still be executing.
+The worker has no cancel. **Stop tracking** sets `flTracked=false` and releases the reservation immediately, including while a real job is still running. It does not write a cancel file and it does not overwrite the worker's status. The tab says tracking stopped and that spend may already be committed. Until `result.json` arrives, that run is not in the month total, so the cap can be understated. If the worker later reports `cost_usd`, that actual cost replaces the released estimate. Stopping tracking does **not** release the one-run lock. The worker may still be executing, and with reserved concurrency unset that lock is the only one-at-a-time guard. Another audit is refused until the worker's row is terminal (`succeeded`, `needs_review`, `failed`, or `cancelled`) or 16 minutes have passed.
 
 ### One run at a time
 
-A new real or test run is refused while another is still queued or running. The API returns `A run is already in progress.` and the Presence tab shows that sentence. A queued or running run older than 16 minutes is marked failed with `timeout`, and its reservation is released, before that check. It does not block the next run.
+A new real or test run is refused while another is still queued or running, including one whose tracking was stopped and whose worker may still be going. The API returns `A run is already in progress.` and the Presence tab shows that sentence. Submit stays enabled; the refusal comes from the API. A queued or running run older than 16 minutes, tracked or not, is marked failed with `timeout`, and its reservation is released, before that check. It does not block the next run.
 
-The race control is a conditional put of `PK=LOCK#presence-audit`, `SK=LOCK`, allowed when the item is missing or its `expiresAt` is in the past. `expiresAt` and the numeric `ttl` are 16 minutes after the run is accepted. The table's TTL attribute is `ttl`, so DynamoDB can delete the lock later. The condition does not wait for that deletion, which can lag. The lock is deleted when the run succeeds, needs review, fails, times out, or tracking is stopped.
+The race control is a conditional put of `PK=LOCK#presence-audit`, `SK=LOCK`, allowed when the item is missing, its `expiresAt` is in the past, or the holder is the same run. `expiresAt` is 16 minutes after the run is accepted. The lock is deleted when a read sees a terminal row, including a row the worker wrote itself (`succeeded`, `needs_review`, or `failed`) before the portal had changed it. Before taking the lock, a new run also reads the holder's row and releases the lock when that run is already terminal or past the 16-minute timeout. The timeout uses the same path that marks the run failed and releases its reservation. Stopping tracking does not delete the lock.
 
-Open runs are read from `GSI1`, which is eventually consistent, so two creates in the same moment can both miss a row that was just written. The lock condition is what stops the second insert. AdminFn already has read and write on the table. The worker's `UpdateItem` is limited to keys starting with `BIZ#`, so it cannot write the lock.
+The portal used to release the lock only when it wrote a status change. The worker writes the terminal status straight onto the `BIZ#` / `RUN#` row, so that path never ran and the next start stayed refused until `expiresAt`. Listing, fetching, or starting a run now releases the lock for every terminal row it sees.
+
+Open runs are read from `GSI1`, which is eventually consistent, so two creates in the same moment can both miss a row that was just written. The lock condition is what stops the second insert. A holder read uses that same index, so a terminal status that has not reached the index yet keeps the lock until a later read sees it or `expiresAt` passes. AdminFn already has read and write on the table. The worker's `UpdateItem` is limited to keys starting with `BIZ#`, so it cannot write the lock.
 
 Retry creates a new ULID and sets `options.compare_to_run_id` to the previous run. It does not reuse the run id.
 
@@ -126,7 +128,7 @@ All of these use the same Cognito check as the other admin routes.
 | `GET` | `/api/admin/presence/runs` | List runs from `GSI1` and the month-to-date figure |
 | `GET` | `/api/admin/presence/runs/{id}` | One run, refreshed from the status row and `result.json` |
 | `POST` | `/api/admin/presence/runs/{id}/download` | Presigned PDF URL, 5 minutes, succeeded runs only |
-| `POST` | `/api/admin/presence/runs/{id}/cancel` | Stop tracking and release the reservation |
+| `POST` | `/api/admin/presence/runs/{id}/cancel` | Stop tracking and release the reservation. The one-run lock stays until a terminal result or 16 minutes |
 | `POST` | `/api/admin/presence/runs/{id}/retry` | New run for a failed, cancelled, or needs-review audit |
 
 ## Build and push the image

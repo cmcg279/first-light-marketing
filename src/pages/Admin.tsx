@@ -508,7 +508,7 @@ export default function Admin() {
 
   async function handleCancelPresenceRun(run: PresenceRun) {
     const confirmed = window.confirm(
-      `Stop tracking the audit for ${run.company}? The worker has no cancel, so a run that has already started may still finish and the spend may already be committed. This releases the cap reservation.`,
+      `Stop tracking the audit for ${run.company}? The worker has no cancel, so a run that has already started may still finish and the spend may already be committed. This releases the cap reservation. Another audit cannot start until this one finishes or 16 minutes have passed.`,
     );
     if (!confirmed) return;
 
@@ -520,7 +520,7 @@ export default function Admin() {
       const result = await cancelPresenceRun(run.id);
       setPresenceRuns((current) => current.map((item) => (item.id === result.run.id ? result.run : item)));
       setPresenceSpend(result.spend);
-      setStatus("Tracking stopped. The reservation was released. Spend that is already committed is not undone.");
+      setStatus("Tracking stopped. The reservation was released. Spend that is already committed is not undone. Another audit waits until this run finishes or 16 minutes have passed.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not stop tracking the audit.");
     } finally {
