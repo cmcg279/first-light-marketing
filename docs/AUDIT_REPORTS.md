@@ -26,7 +26,7 @@ Top-level keys only: `schema`, `run_id`, `business_id`, `requested_by`, `kind`, 
 
 `run_id` is always a valid ULID and `business_id` is always a valid slug, so a worker-side `bad_input` still writes the status row. The invoke is asynchronous (`InvocationType` `Event`). AdminFn reads the status code, `FunctionError`, and any body. An empty event body is normal. A `bad_input` or failed body is applied immediately. A non-202 result marks the run failed and releases its reservation. A run that stays queued or running for more than 16 minutes is marked failed with `timeout` and its reservation is released.
 
-`AuditWorkerFn` has an event invoke config of zero retries and a one-minute maximum event age. Lambda does not retry a throttled or crashed run, and it does not hold the event for hours. The row shows failed, and the way to try again is to start a new run.
+`AuditWorkerFn` has an event invoke config of zero retries and a one-minute maximum event age. Lambda does not retry a throttled or crashed run, and it does not hold the event for hours. The row shows failed, and the way to try again is to start a new run. A throttled invoke is dropped after that minute without a callback, so the portal keeps showing the run as queued until the 16-minute timeout marks it failed and releases the reservation.
 
 ## Where the worker reads and writes
 
