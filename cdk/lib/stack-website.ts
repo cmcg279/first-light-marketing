@@ -718,15 +718,19 @@ function addPresenceAudit(stack: cdk.Stack, props: PresenceAuditProps) {
   );
   const socialAuditSecret = new secretsmanager.Secret(stack, "SocialAuditSecret", {
     secretName: `first-light/${props.stage}/social-audit`,
-    description: "JSON keys APIFY_TOKEN, GOOGLE_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY. Empty until a real run. Test mode does not read this.",
-    secretStringValue: cdk.SecretValue.unsafePlainText(
-      JSON.stringify({
+    description: "JSON keys APIFY_TOKEN, GOOGLE_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY. Generated once. Test mode does not read this.",
+    // GenerateSecretString is applied when the secret is created. A later deploy
+    // does not write it again unless this block changes, so a token entered with
+    // put-secret-value is not replaced by the empty template.
+    generateSecretString: {
+      secretStringTemplate: JSON.stringify({
         APIFY_TOKEN: "",
         GOOGLE_API_KEY: "",
         OPENAI_API_KEY: "",
         GEMINI_API_KEY: "",
       }),
-    ),
+      generateStringKey: "cdkGenerated",
+    },
     removalPolicy: props.isDev ? cdk.RemovalPolicy.DESTROY : cdk.RemovalPolicy.RETAIN,
   });
   const repository = ecr.Repository.fromRepositoryName(stack, "AuditWorkerRepo", image.repositoryName);
@@ -784,7 +788,7 @@ function addPresenceAudit(stack: cdk.Stack, props: PresenceAuditProps) {
   new cdk.CfnOutput(stack, "AuditWorkerFunctionName", { value: worker.functionName });
   new cdk.CfnOutput(stack, "SocialAuditSecretArn", {
     value: socialAuditSecret.secretArn,
-    description: "JSON secret with empty APIFY_TOKEN, GOOGLE_API_KEY, OPENAI_API_KEY, and GEMINI_API_KEY placeholders. Test mode does not read it.",
+    description: "JSON secret. APIFY_TOKEN, GOOGLE_API_KEY, OPENAI_API_KEY, and GEMINI_API_KEY start empty. Later deploys do not reset them unless the generate block changes.",
   });
 }
 

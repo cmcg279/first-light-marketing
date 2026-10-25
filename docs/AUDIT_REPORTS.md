@@ -156,7 +156,7 @@ unset FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL
 npm run deploy:dev
 ```
 
-Confirm the stack outputs `AuditWorkerFunctionName` and `SocialAuditSecretArn`. The secret `first-light/<stage>/social-audit` is created as JSON with empty `APIFY_TOKEN`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, and `GEMINI_API_KEY`. Test mode does not read it. Do not put those values in a Lambda environment variable.
+Confirm the stack outputs `AuditWorkerFunctionName` and `SocialAuditSecretArn`. The secret `first-light/<stage>/social-audit` uses `GenerateSecretString`. The template JSON has empty `APIFY_TOKEN`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, and `GEMINI_API_KEY`, plus a generated `cdkGenerated` field the worker ignores. CloudFormation writes that value when the secret is created. A later deploy does not write it again unless that generate block changes, so tokens entered afterwards stay. Do not edit the generate block after the secret exists: a change creates a new secret version. Production retains the secret on stack delete. Test mode does not read it. Do not put those values in a Lambda environment variable.
 
 `STAGE=dev npx cdk synth` in `cdk/` also succeeds with the tag unset. With the tag set, the template contains `AuditWorkerFn` (arm64, 2048 MB, 15 minute timeout, 512 MB ephemeral storage, reserved concurrency 1) and does not add a function URL for it.
 
@@ -191,7 +191,7 @@ aws secretsmanager put-secret-value \
 npm run deploy:dev
 ```
 
-That deploy omits `SOCIAL_AUDIT_TEST_MODE`, so the checkbox controls `test_mode` on each event. Do not pass token values as CDK environment variables. The DeepSeek secret used by Instagram settings is separate and is not read by this worker.
+That replaces the generated placeholder. The following deploy does not put the empty template back while the generate block in the stack is unchanged. The deploy also omits `SOCIAL_AUDIT_TEST_MODE`, so the checkbox controls `test_mode` on each event. Do not pass token values as CDK environment variables. The DeepSeek secret used by Instagram settings is separate and is not read by this worker.
 
 Then turn **Free test run** off for a single company. The `$65` cap still applies, and each real run reserves `$6` until `cost_usd` arrives. Production does not get the worker until `FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG` is set on a production deploy, and the worker stays in forced test mode until `FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true` as well.
 
