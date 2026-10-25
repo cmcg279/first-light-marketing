@@ -74,7 +74,7 @@ export FIRST_LIGHT_AUDIT_RUNNER_TOKEN="the-existing-runner-token"  # required on
 
 ### Online presence audits (optional)
 
-Leave these unset for a normal production deploy. The audit worker, its role, and the social-audit JSON secret are created only when an image tag is set. Without that tag the stack does not gain a Lambda. The table, buckets, and user pool are not replaced. The existing table does gain `GSI1` (`GSI1PK` / `GSI1SK`) so presence runs can be listed without a scan. That index update is in place. AdminFn also gains the USD cap settings below.
+Leave these unset for a normal production deploy. The audit worker, its role, and the social-audit JSON secret are created only when an image tag is set. Without that tag the stack does not gain a Lambda. The table, buckets, and user pool are not replaced. The existing table does gain `GSI1` (`GSI1PK` / `GSI1SK`) so presence runs can be listed without a scan. That index update is in place. The table does not gain a TTL attribute. The presence-audit lock is one item, and the next conditional put treats it as free once `expiresAt` is in the past, so DynamoDB TTL is not required. Leaving TTL off keeps that change out of the production diff, including a deploy with no worker image. AdminFn also gains the USD cap settings below.
 
 ```bash
 export FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG=""          # empty skips the worker
@@ -86,7 +86,7 @@ export FIRST_LIGHT_AUDIT_RUN_COST_ESTIMATE_USD="6"    # released on failure, tim
 
 Do not export `FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true` until a dev test run has been checked. Real mode is off unless that value is exactly `true`. While it is off, the worker gets `SOCIAL_AUDIT_TEST_MODE=1`. Dev and production both default the worker to free test mode. The full build, push, and dev test steps are in [AUDIT_REPORTS.md](AUDIT_REPORTS.md). Do not put an Apify token or an AI key in the environment. The worker secret is one JSON object (`APIFY_TOKEN`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) created with `GenerateSecretString` when the image tag is set. A later stack update does not reset values entered in Secrets Manager unless that generate block changes. Production retains the secret.
 
-This account's Lambda concurrent-executions quota is 10. Lambda keeps 10 unreserved, so `ReservedConcurrentExecutions: 1` fails the deploy with "decreases account's UnreservedConcurrentExecution below its minimum value of [10]". The same failure would hit production. `FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY` therefore defaults to unset (`none`, `unset`, and `0` do the same). The function is created with no reserved concurrency. After the quota is raised to 100 or more, turn it back on and redeploy:
+This account's Lambda concurrent-executions quota is 10. Lambda keeps 10 unreserved, so `ReservedConcurrentExecutions: 1` fails the deploy with "decreases account's UnreservedConcurrentExecution below its minimum value of [10]". The same failure would hit production. `FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY` therefore defaults to unset. `none` and `unset` do the same. A value of `0` is also off: it does not reserve zero executions, and the property is omitted. The function is created with no reserved concurrency. After the quota is raised to 100 or more, turn it back on and redeploy:
 
 ```bash
 export FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY="1"
@@ -247,7 +247,7 @@ Read the diff before approving anything. All of the following must be true:
 - `AWS::Cognito::UserPoolDomain` (`AdminUserPoolDomain`) shows no change. The domain prefix is the same.
 - `AWS::Cognito::UserPoolClient` shows no change. Callback URLs, logout URLs, and the client id stay as they are. If the diff adds or removes a URL, fix the environment variables above and run the diff again. Do not deploy a client change in phase 1.
 - The DynamoDB table, site bucket, media bucket, audit-report bucket, and user pool are not replaced. A replacement shows the resource being destroyed and created again.
-- With `FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG` unset, there is no `AuditWorkerFn`, no `SocialAuditSecret`, and no new bucket. AdminFn may show new environment variables for the USD presence-audit cap (`AUDIT_MONTHLY_CAP_USD` default 65, `AUDIT_RUN_COST_ESTIMATE_USD` default 6). The existing table may gain `GSI1`. That is an in-place index update, not a new table and not a replacement.
+- With `FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG` unset, there is no `AuditWorkerFn`, no `SocialAuditSecret`, and no new bucket. AdminFn may show new environment variables for the USD presence-audit cap (`AUDIT_MONTHLY_CAP_USD` default 65, `AUDIT_RUN_COST_ESTIMATE_USD` default 6). The existing table may gain `GSI1`. That is an in-place index update, not a new table and not a replacement. The table should not gain `TimeToLiveSpecification`. The presence lock does not use DynamoDB TTL.
 
 Phase 1 may still change Lambda code, function URL auth, the distribution, headers, and alarms. Those are in place. Phase 2's diff should be the user pool MFA setting moving from optional to required, and nothing else.
 

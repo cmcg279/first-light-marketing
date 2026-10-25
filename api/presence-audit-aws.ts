@@ -224,7 +224,6 @@ async function acquireRunLock(tableName: string, runId: string, now: Date) {
           entityType: "PRESENCE_LOCK",
           holder: runId,
           expiresAt: new Date(expiresMs).toISOString(),
-          ttl: Math.floor(expiresMs / 1000),
         },
         ConditionExpression: "attribute_not_exists(PK) OR expiresAt < :now OR holder = :holder",
         ExpressionAttributeValues: { ":now": now.toISOString(), ":holder": runId },
