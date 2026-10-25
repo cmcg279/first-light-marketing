@@ -88,6 +88,14 @@ export class WebsiteStack extends cdk.Stack {
       },
       removalPolicy,
     });
+    // The worker's status rows use this index (GSI1PK="RUNS", GSI1SK=<started_at>#<run_id>).
+    // Adding it updates the existing table in place. It does not create or replace the table.
+    table.addGlobalSecondaryIndex({
+      indexName: "GSI1",
+      partitionKey: { name: "GSI1PK", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "GSI1SK", type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
 
     const senderIdentity = isProduction
       ? new ses.EmailIdentity(this, "SenderIdentity", {
@@ -350,7 +358,6 @@ export class WebsiteStack extends cdk.Stack {
       auditReportsBucket,
       adminFn,
       alarmTopic,
-      deepseekSecret,
     });
 
     // Authorization is intentionally absent. OAC overwrites that header with its

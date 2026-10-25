@@ -1,51 +1,60 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  applyWorkerStatus,
-  capBlocks,
   handlePresenceRequest,
   loadPresenceConfig,
   monthKey,
+  newRunId,
+  overlayWorkerResult,
+  pdfObjectKey,
+  projectRun,
+  publicRun,
+  resultObjectKey,
+  runFromItem,
+  runLookupQuery,
+  runToItem,
+  runsIndexQuery,
+  slugifyBusinessId,
+  usdToCents,
+  validateJob,
   workerPayload,
+  RUN_TIMEOUT_MS,
+  type InvokeOutcome,
+  type PortalClaim,
   type PresenceConfig,
   type PresenceRun,
   type PresenceStore,
   type SpendReservation,
+  type WorkerJob,
 } from "./presence-audit.ts";
 
 const NOW = new Date("2026-10-24T18:30:00.000Z");
+const RUN = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 
 describe("presence audit config", () => {
-  it("defaults to a £50 cap, a £5 estimate, test mode, and no worker", () => {
+  it("defaults to a $65 cap, a $6 estimate, test mode, and no worker", () => {
     const config = loadPresenceConfig({});
-    assert.equal(config.capGbp, 50);
-    assert.equal(config.estimateGbp, 5);
-    assert.equal(config.pageLimit, 35);
+    assert.equal(config.capUsd, 65);
+    assert.equal(config.estimateUsd, 6);
     assert.equal(config.realRunsEnabled, false);
     assert.equal(config.defaultTestMode, true);
     assert.equal(config.workerConfigured, false);
-    assert.equal(config.brandConfigPath, "brand.json");
   });
 
-  it("ignores malformed money and page limits and only enables real runs for the exact string true", () => {
+  it("ignores malformed money and only enables real runs for the exact string true", () => {
     const config = loadPresenceConfig({
-      AUDIT_MONTHLY_CAP_GBP: "nope",
-      AUDIT_RUN_COST_ESTIMATE_GBP: "0",
-      AUDIT_PAGE_LIMIT: "40",
+      AUDIT_MONTHLY_CAP_USD: "nope",
+      AUDIT_RUN_COST_ESTIMATE_USD: "0",
       AUDIT_REAL_RUNS_ENABLED: "TRUE",
       PRESENCE_DEFAULT_TEST_MODE: "false",
-      AUDIT_BRAND_CONFIG_PATH: "../secret.json",
       AUDIT_WORKER_FUNCTION_NAME: "audit-worker",
       AUDIT_REPORTS_BUCKET_NAME: "reports",
     });
-    assert.equal(config.capGbp, 50);
-    assert.equal(config.estimateGbp, 5);
-    assert.equal(config.pageLimit, 35);
+    assert.equal(config.capUsd, 65);
+    assert.equal(config.estimateUsd, 6);
     assert.equal(config.realRunsEnabled, false);
     assert.equal(config.defaultTestMode, false);
-    assert.equal(config.brandConfigPath, "brand.json");
     assert.equal(config.workerConfigured, true);
-    assert.equal(config.bucket, "reports");
   });
 
   it("uses the UTC month", () => {
@@ -54,12 +63,197 @@ describe("presence audit config", () => {
   });
 });
 
+describe("worker contract", () => {
+  it("allocates a 26-character ULID and a slug business id", () => {
+    const first = newRunId(1_700_000_000_000, new Uint8Array(10));
+    const second = newRunId(1_700_000_000_001, new Uint8Array(10));
+    assert.match(first, /^[0-9A-HJKMNP-TV-Z]{26}$/);
+    assert.equal(first.length, 26);
+    assert.ok(first < second);
+    assert.equal(slugifyBusinessId("Harbour & Co Bakery"), "harbour-co-bakery");
+  });
+
+  it("builds a payload validate_job accepts and drops fields the worker rejects", () => {
+    const run = sampleRun();
+    const payload = workerPayload(run);
+    assert.deepEqual(validateJob(payload), payload);
+    assert.equal(payload.schema, 1);
+    assert.equal(payload.run_id, run.id);
+    assert.equal(payload.business_id, "harbour-cafe");
+    assert.equal(payload.requested_by, "admin:test");
+    assert.equal(payload.kind, "admin");
+    assert.equal(payload.company, "Harbour Cafe");
+    assert.equal(payload.website, "https://harbour.example");
+    assert.deepEqual(payload.handles, { instagram: "harbourcafe", facebook: "Harbour Cafe" });
+    assert.equal(payload.brand, "first_light");
+    assert.equal(payload.test_mode, true);
+    assert.equal(payload.options.compare_to_run_id, null);
+    for (const key of ["businessName", "socials", "pageLimit", "page_limit", "bucket", "output", "runId", "testMode"]) {
+      assert.equal(key in payload, false);
+    }
+    assert.throws(() => validateJob({ ...payload, businessName: "Harbour Cafe" }), /unknown field\(s\) businessName/);
+    assert.throws(() => validateJob({ ...payload, pageLimit: 35 }), /unknown field\(s\) pageLimit/);
+    assert.throws(() => validateJob({ ...payload, bucket: "reports", output: {} }), /unknown field/);
+    assert.throws(() => validateJob({ ...payload, handles: { linkedin: "harbour" } }), /unknown field\(s\) linkedin/);
+    assert.throws(() => validateJob({ ...payload, run_id: "11111111-1111-4111-8111-111111111111" }), /ULID/);
+  });
+
+  it("rejects websites and handles the worker would reject", () => {
+    const base = workerPayload(sampleRun({ testMode: false }));
+    const websites = [
+      "http://harbour.example",
+      "https://user:secret@harbour.example",
+      "https://localhost/admin",
+      "https://127.0.0.1",
+      "https://10.1.1.1",
+      "https://192.168.0.8",
+      "https://172.16.0.1",
+      "https://169.254.1.1",
+      "https://[::1]/",
+      "https://printer.local",
+      "https://db.internal",
+      "https://app.localhost",
+      "https://intranet",
+      "https://harbour.example:8443",
+      "ftp://harbour.example",
+    ];
+    for (const website of websites) {
+      assert.throws(() => validateJob({ ...base, website }), website);
+    }
+    assert.doesNotThrow(() => validateJob({ ...base, website: "https://harbour.example:443" }));
+    assert.throws(() => validateJob({ ...base, handles: { instagram: "bad handle" } }), /Instagram/);
+    assert.equal(validateJob({ ...base, handles: { instagram: "@harbour.cafe" } }).handles.instagram, "harbour.cafe");
+    assert.throws(() => validateJob({ ...base, handles: { tiktok: "a" } }), /TikTok/);
+    assert.throws(() => validateJob({ ...base, handles: { youtube: "harbour" } }), /youtube/);
+    assert.throws(() => validateJob({ ...base, handles: { x: "harbour" } }), /unknown field/);
+  });
+
+  it("lists runs from GSI1PK=RUNS and does not scan", () => {
+    const query = runsIndexQuery("leads");
+    assert.equal(query.IndexName, "GSI1");
+    assert.equal(query.KeyConditionExpression, "GSI1PK = :pk");
+    assert.equal(query.ExpressionAttributeValues[":pk"], "RUNS");
+    assert.equal("FilterExpression" in query, false);
+    assert.equal(Object.keys(query).join(" "), "TableName IndexName KeyConditionExpression ExpressionAttributeValues ScanIndexForward");
+    const lookup = runLookupQuery("leads", RUN);
+    assert.equal(lookup.IndexName, "GSI1");
+    assert.equal(lookup.FilterExpression, "SK = :sk");
+    assert.equal(lookup.ExpressionAttributeValues[":sk"], `RUN#${RUN}`);
+  });
+
+  it("round-trips the worker status row", () => {
+    const run = sampleRun({ status: "running", startedAt: NOW.toISOString() });
+    const item = runToItem(run, workerPayload(run));
+    assert.equal(item.PK, "BIZ#harbour-cafe");
+    assert.equal(item.SK, `RUN#${RUN}`);
+    assert.equal(item.GSI1PK, "RUNS");
+    const back = runFromItem(item);
+    assert.equal(back?.id, RUN);
+    assert.equal(back?.businessId, "harbour-cafe");
+    assert.equal(back?.company, "Harbour Cafe");
+    assert.equal(back?.status, "running");
+  });
+});
+
+describe("result states and the cap", () => {
+  it("maps gate failures, unreachable, social_required and timeout without calling them completed", () => {
+    const run = sampleRun({ testMode: false, reservedCents: 500, costSource: "estimate", status: "running" });
+    const review = overlayWorkerResult(run, {
+      status: "needs_review",
+      quality_gate: { passed: false, failures: ["too_many_pages", "website_not_fetched"] },
+      cost_usd: { total: 4 },
+      artifacts: { pdf: pdfObjectKey(run) },
+    });
+    const reviewPublic = publicRun(projectRun(review, NOW, testConfig()).run);
+    assert.equal(reviewPublic.status, "needs_review");
+    assert.equal(reviewPublic.statusLabel, "Needs review");
+    assert.equal(reviewPublic.completed, false);
+    assert.equal(reviewPublic.downloadReady, false);
+    assert.match(reviewPublic.statusMessage, /longer than 35 pages/);
+    assert.match(reviewPublic.statusMessage, /not a completed audit/);
+
+    const unreachableRun = overlayWorkerResult(run, { status: "failed", error: { code: "website_unreachable", message: "the website could not be fetched" } });
+    const unreachable = publicRun(unreachableRun);
+    assert.equal(unreachable.completed, false);
+    assert.match(unreachable.statusMessage, /could not be fetched/);
+    const released = projectRun(unreachableRun, NOW, testConfig());
+    assert.equal(released.run.costSource, "released");
+    assert.equal(released.costDeltaCents, -500);
+
+    const social = publicRun(overlayWorkerResult(run, { status: "cancelled", error: { code: "social_required", message: "Instagram could not be fetched" } }));
+    assert.equal(social.status, "cancelled");
+    assert.equal(social.completed, false);
+    assert.match(social.statusMessage, /cancelled/);
+
+    const timedOut = publicRun(overlayWorkerResult(run, { status: "failed", error: { code: "timeout", message: "the job ran out of time" } }));
+    assert.equal(timedOut.statusLabel, "Failed");
+    assert.match(timedOut.statusMessage, /ran out of time/);
+
+    const done = overlayWorkerResult(run, { status: "succeeded", quality_gate: { passed: true, failures: [] }, artifacts: { pdf: pdfObjectKey(run) } });
+    const donePublic = publicRun(done);
+    assert.equal(donePublic.completed, true);
+    assert.equal(donePublic.statusLabel, "Completed");
+    assert.equal(donePublic.downloadReady, true);
+  });
+
+  it("replaces the flat reservation with cost_usd in dollars", () => {
+    assert.equal(usdToCents(10), 1000);
+    const run = sampleRun({ testMode: false, reservedCents: 600, costSource: "estimate", status: "running" });
+    const overlaid = overlayWorkerResult(run, { status: "succeeded", cost_usd: { total: 10, apify_instagram: 10 }, artifacts: { pdf: pdfObjectKey(run) } });
+    const projected = projectRun(overlaid, NOW, testConfig());
+    assert.equal(projected.costDeltaCents, 400);
+    assert.equal(projected.run.reservedCents, 1000);
+    assert.equal(projected.run.costSource, "worker");
+    const again = projectRun(projected.run, NOW, testConfig());
+    assert.equal(again.costDeltaCents, 0);
+    const failedWithCost = projectRun(
+      overlayWorkerResult(run, { status: "failed", error: { code: "internal", message: "stopped" }, cost_usd: { total: 1.5 } }),
+      NOW,
+      testConfig(),
+    );
+    assert.equal(failedWithCost.run.reservedCents, 150);
+    assert.equal(failedWithCost.run.costSource, "worker");
+
+    const free = projectRun(
+      overlayWorkerResult(sampleRun(), { status: "succeeded", cost_usd: { total: 9 } }),
+      NOW,
+      testConfig(),
+    );
+    assert.equal(free.costDeltaCents, 0);
+    assert.equal(free.run.reservedCents, 0);
+    assert.equal(free.run.costSource, "test");
+  });
+
+  it("fails a run that has been running for more than 16 minutes and releases the estimate", () => {
+    const started = new Date(NOW.getTime() - RUN_TIMEOUT_MS - 1000).toISOString();
+    const stuck = sampleRun({
+      testMode: false,
+      status: "running",
+      startedAt: started,
+      reservedCents: 500,
+      costSource: "estimate",
+    });
+    const projected = projectRun(stuck, NOW, testConfig());
+    assert.equal(projected.claim, "timeout");
+    assert.equal(projected.run.status, "failed");
+    assert.equal(projected.run.errorCode, "timeout");
+    assert.equal(projected.costDeltaCents, -500);
+    assert.equal(projected.run.reservedCents, 0);
+    assert.equal(projected.run.costSource, "released");
+
+    const notYet = projectRun({ ...stuck, startedAt: new Date(NOW.getTime() - RUN_TIMEOUT_MS).toISOString() }, NOW, testConfig());
+    assert.equal(notYet.claim, null);
+    assert.equal(notYet.run.status, "running");
+  });
+});
+
 describe("presence audit API", () => {
   it("requires auth before listing, creating, or cancelling", async () => {
+    const created = sampleRun();
     for (const request of [
       { method: "GET", path: "/api/admin/presence/runs" },
       { method: "POST", path: "/api/admin/presence/runs", body: JSON.stringify(validBody()) },
-      { method: "POST", path: "/api/admin/presence/runs/11111111-1111-4111-8111-111111111111/cancel" },
+      { method: "POST", path: `/api/admin/presence/runs/${created.id}/cancel` },
     ]) {
       const store = memoryStore();
       const response = await handlePresenceRequest({
@@ -72,24 +266,25 @@ describe("presence audit API", () => {
         store,
       });
       assert.equal(response.statusCode, 401);
-      assert.deepEqual(response.body, { error: "Please log in again." });
       assert.equal(store.inserts, 0);
       assert.equal(store.invocations.length, 0);
     }
   });
 
-  it("rejects a run that is missing a business name, uses http, or asks for too many pages", async () => {
-    const cases = [
-      [{ ...validBody(), businessName: "  " }, "Business name is required."],
-      [{ ...validBody(), website: "http://example.com" }, "Website must be an https URL."],
-      [{ ...validBody(), website: "https://user:secret@example.com" }, "Website must not include a username or password."],
-      [{ ...validBody(), pageLimit: 36 }, "Page limit must be a whole number from 1 to 35."],
-      [{ ...validBody(), pageLimit: 0 }, "Page limit must be a whole number from 1 to 35."],
-      [{ ...validBody(), socials: { instagram: "bad handle" } }, "Instagram must be a handle or an https URL."],
-      [{ ...validBody(), testMode: "true" }, "Free test run must be true or false."],
-      ["{", "Invalid JSON."],
-    ] as const;
-
+  it("rejects fields and websites the worker does not accept", async () => {
+    const cases: Array<[unknown, RegExp]> = [
+      [{ ...validBody(), company: "  " }, /company is required/],
+      [{ ...validBody(), businessName: "Harbour Cafe" }, /Unknown field businessName/],
+      [{ ...validBody(), pageLimit: 35 }, /Unknown field pageLimit/],
+      [{ ...validBody(), socials: { instagram: "harbour" } }, /Unknown field socials/],
+      [{ ...validBody(), website: "http://harbour.example" }, /https:\/\//],
+      [{ ...validBody(), website: "https://169.254.1.1" }, /IP address or internal host/],
+      [{ ...validBody(), website: "https://printer.local" }, /internal host/],
+      [{ ...validBody(), handles: { linkedin: "harbour", instagram: "harbour" } }, /linkedin/],
+      [{ ...validBody(), handles: { instagram: "bad handle" } }, /Instagram/],
+      [{ ...validBody(), testMode: "true" }, /true or false/],
+      ["{", /Invalid JSON/],
+    ];
     for (const [body, message] of cases) {
       const store = memoryStore();
       const response = await handlePresenceRequest({
@@ -102,7 +297,7 @@ describe("presence audit API", () => {
         store,
       });
       assert.equal(response.statusCode, body === "{" ? 400 : 422);
-      assert.equal((response.body as { error: string }).error, message);
+      assert.match((response.body as { error: string }).error, message);
       assert.equal(store.inserts, 0);
     }
   });
@@ -112,53 +307,57 @@ describe("presence audit API", () => {
     const response = await postRun(store, { ...validBody(), testMode: false }, testConfig());
     assert.equal(response.statusCode, 409);
     assert.match((response.body as { error: string }).error, /Real runs are switched off/);
-    assert.equal(await store.monthSpendPence("2026-10"), 0);
-    assert.equal(store.invocations.length, 0);
+    assert.equal(await store.monthSpendCents("2026-10"), 0);
   });
 
-  it("does not let the client set the price of a real run", async () => {
+  it("reserves the flat estimate for a real run and ignores a client cost", async () => {
     const store = memoryStore();
-    const config = testConfig({ realRunsEnabled: true, capGbp: 50, estimateGbp: 5 });
-    const response = await postRun(store, { ...validBody(), testMode: false, estimatedCostGbp: 0 }, config);
+    const rejected = await postRun(store, { ...validBody(), testMode: false, estimatedCostUsd: 0 }, testConfig({ realRunsEnabled: true }));
+    assert.equal(rejected.statusCode, 422);
+    const response = await postRun(store, { ...validBody(), testMode: false }, testConfig({ realRunsEnabled: true }));
     assert.equal(response.statusCode, 200);
-    const body = response.body as { run: { estimatedCostGbp: number; costLabel: string; testMode: boolean } };
+    const body = response.body as { run: { estimatedCostUsd: number; costLabel: string; testMode: boolean; id: string } };
     assert.equal(body.run.testMode, false);
-    assert.equal(body.run.estimatedCostGbp, 5);
+    assert.equal(body.run.estimatedCostUsd, 6);
     assert.equal(body.run.costLabel, "Estimated");
-    assert.equal(await store.monthSpendPence("2026-10"), 500);
+    assert.match(body.run.id, /^[0-9A-HJKMNP-TV-Z]{26}$/);
+    assert.equal(await store.monthSpendCents("2026-10"), 600);
   });
 
-  it("blocks a real run that would pass the monthly cap and still allows a free test run", async () => {
+  it("blocks a real run past the cap and still allows a free test", async () => {
     const store = memoryStore();
-    const config = testConfig({ realRunsEnabled: true, capGbp: 10, estimateGbp: 5 });
-    assert.equal((await postRun(store, { ...validBody(), businessName: "One", testMode: false }, config)).statusCode, 200);
-    assert.equal((await postRun(store, { ...validBody(), businessName: "Two", testMode: false }, config)).statusCode, 200);
-    const blocked = await postRun(store, { ...validBody(), businessName: "Three", testMode: false }, config);
+    const config = testConfig({ realRunsEnabled: true, capUsd: 10, estimateUsd: 5 });
+    assert.equal((await postRun(store, { ...validBody(), company: "One Co", testMode: false }, config)).statusCode, 200);
+    assert.equal((await postRun(store, { ...validBody(), company: "Two Co", testMode: false }, config)).statusCode, 200);
+    const blocked = await postRun(store, { ...validBody(), company: "Three Co", testMode: false }, config);
     assert.equal(blocked.statusCode, 409);
-    assert.match((blocked.body as { error: string }).error, /£10\.00 of the £10\.00 cap/);
-    assert.equal(await store.monthSpendPence("2026-10"), 1000);
-
-    const testRun = await postRun(store, { ...validBody(), businessName: "Sample", testMode: true }, config);
+    assert.match((blocked.body as { error: string }).error, /\$10\.00 of the \$10\.00 cap/);
+    const testRun = await postRun(store, { ...validBody(), company: "Sample Co", testMode: true }, config);
     assert.equal(testRun.statusCode, 200);
-    const body = testRun.body as { run: { costLabel: string; estimatedCostGbp: number }; spend: { monthToDateGbp: number } };
-    assert.equal(body.run.costLabel, "Free");
-    assert.equal(body.run.estimatedCostGbp, 0);
-    assert.equal(body.spend.monthToDateGbp, 10);
-    assert.equal(await store.monthSpendPence("2026-10"), 1000);
+    assert.equal((testRun.body as { run: { costLabel: string } }).run.costLabel, "Free");
+    assert.equal(await store.monthSpendCents("2026-10"), 1000);
   });
 
-  it("allows a real run that lands exactly on the cap", () => {
-    assert.equal(capBlocks(500, 500, 1000), false);
-    assert.equal(capBlocks(501, 500, 1000), true);
-    assert.equal(capBlocks(1000, 0, 1000), false);
-  });
-
-  it("releases the reservation when a queued run is cancelled, and keeps it once the run is in progress", async () => {
+  it("applies a bad_input invoke result immediately and releases the reservation", async () => {
     const store = memoryStore();
-    const config = testConfig({ realRunsEnabled: true, capGbp: 5, estimateGbp: 5 });
+    store.invokePayload = { status: "failed", error: { code: "bad_input", message: "website must be a public domain name" } };
+    const config = testConfig({ realRunsEnabled: true });
+    const response = await postRun(store, { ...validBody(), testMode: false }, config);
+    assert.equal(response.statusCode, 200);
+    const run = (response.body as { run: { status: string; errorCode?: string; statusLabel: string; completed: boolean } }).run;
+    assert.equal(run.status, "failed");
+    assert.equal(run.errorCode, "bad_input");
+    assert.equal(run.statusLabel, "Failed");
+    assert.equal(run.completed, false);
+    assert.equal(await store.monthSpendCents("2026-10"), 0);
+    assert.notEqual((await store.listRuns())[0]?.status, "queued");
+  });
+
+  it("releases the reservation when tracking is stopped and says spend may already be committed", async () => {
+    const store = memoryStore();
+    const config = testConfig({ realRunsEnabled: true });
     const created = await postRun(store, { ...validBody(), testMode: false }, config);
     const id = (created.body as { run: { id: string } }).run.id;
-
     const cancelled = await handlePresenceRequest({
       method: "POST",
       path: `/api/admin/presence/runs/${id}/cancel`,
@@ -168,83 +367,64 @@ describe("presence audit API", () => {
       store,
     });
     assert.equal(cancelled.statusCode, 200);
-    assert.equal((cancelled.body as { run: { status: string; costLabel: string } }).run.status, "cancelled");
-    assert.equal(await store.monthSpendPence("2026-10"), 0);
-    assert.ok(store.objects.has(`runs/${id}/cancel.json`));
-
-    const again = await postRun(store, { ...validBody(), businessName: "After cancel", testMode: false }, config);
-    const runningId = (again.body as { run: { id: string } }).run.id;
-    const running = await store.getRun(runningId);
-    assert.ok(running);
-    running.status = "running";
-    await store.saveRun(running, null);
-
-    const keep = await handlePresenceRequest({
-      method: "POST",
-      path: `/api/admin/presence/runs/${runningId}/cancel`,
-      config,
-      now: NOW,
-      authorize: allow,
-      store,
-    });
-    assert.equal(keep.statusCode, 200);
-    assert.equal(await store.monthSpendPence("2026-10"), 500);
+    const body = cancelled.body as { run: { trackingStopped: boolean; statusMessage: string; status: string; costLabel: string } };
+    assert.equal(body.run.trackingStopped, true);
+    assert.equal(body.run.status, "queued");
+    assert.match(body.run.statusMessage, /no cancel/);
+    assert.match(body.run.statusMessage, /spend may already be committed/);
+    assert.equal(body.run.costLabel, "Released");
+    assert.equal(await store.monthSpendCents("2026-10"), 0);
+    assert.equal(store.objects.has(`runs/harbour-cafe/${id}/cancel.json`), false);
   });
 
   it("returns 503 and does not reserve spend when the worker is not deployed", async () => {
     const store = memoryStore();
-    const response = await postRun(store, validBody(), testConfig({ workerConfigured: false }));
+    const response = await postRun(store, validBody(), testConfig({ workerConfigured: false, bucket: "" }));
     assert.equal(response.statusCode, 503);
     assert.equal(store.inserts, 0);
-    assert.equal(await store.monthSpendPence("2026-10"), 0);
+    assert.equal(await store.monthSpendCents("2026-10"), 0);
   });
 
-  it("releases a new reservation when the worker cannot be started, then reserves again on retry", async () => {
+  it("releases a reservation when invoke fails, then reserves a new run on retry", async () => {
     const store = memoryStore();
     store.failInvoke = true;
-    const config = testConfig({ realRunsEnabled: true, capGbp: 5, estimateGbp: 5 });
+    const config = testConfig({ realRunsEnabled: true, capUsd: 5, estimateUsd: 5 });
     const response = await postRun(store, { ...validBody(), testMode: false }, config);
     assert.equal(response.statusCode, 502);
-    assert.equal(await store.monthSpendPence("2026-10"), 0);
+    assert.equal(await store.monthSpendCents("2026-10"), 0);
     const failed = (await store.listRuns())[0];
-    assert.equal(failed.status, "failed");
+    assert.equal(failed?.status, "failed");
 
     store.failInvoke = false;
     const retried = await handlePresenceRequest({
       method: "POST",
-      path: `/api/admin/presence/runs/${failed.id}/retry`,
+      path: `/api/admin/presence/runs/${failed?.id}/retry`,
       config,
       now: NOW,
       authorize: allow,
       store,
     });
     assert.equal(retried.statusCode, 200);
-    assert.equal((retried.body as { run: { status: string; attempts: number } }).run.attempts, 2);
-    assert.equal(await store.monthSpendPence("2026-10"), 500);
+    const retryBody = retried.body as { run: { id: string; status: string } };
+    assert.notEqual(retryBody.run.id, failed?.id);
+    assert.match(retryBody.run.id, /^[0-9A-HJKMNP-TV-Z]{26}$/);
+    const sent = store.invocations.at(-1) as WorkerJob;
+    assert.equal(sent.options.compare_to_run_id, failed?.id);
+    assert.equal(await store.monthSpendCents("2026-10"), 500);
 
-    const held = await store.getRun(failed.id);
-    assert.ok(held);
-    held.status = "failed";
-    await store.saveRun(held, null);
-    const overCap = await handlePresenceRequest({
-      method: "POST",
-      path: `/api/admin/presence/runs/${failed.id}/retry`,
-      config,
-      now: NOW,
-      authorize: allow,
-      store,
-    });
-    assert.equal(overCap.statusCode, 409);
-    assert.match((overCap.body as { error: string }).error, /£5\.00 of the £5\.00 cap/);
+    const blocked = await postRun(store, { ...validBody(), company: "Second Co", testMode: false }, config);
+    assert.equal(blocked.statusCode, 409);
+    assert.match((blocked.body as { error: string }).error, /\$5\.00 of the \$5\.00 cap/);
   });
 
-  it("refuses a download until the PDF is ready, then returns a short-lived URL", async () => {
+  it("downloads only a succeeded result, and a PDF alone does not complete the run", async () => {
     const store = memoryStore();
     const created = await postRun(store, validBody(), testConfig());
-    const id = (created.body as { run: { id: string } }).run.id;
+    const run = (created.body as { run: { id: string; businessId: string } }).run;
+    store.markPdf(pdfObjectKey({ businessId: run.businessId, id: run.id }));
     const early = await handlePresenceRequest({
       method: "POST",
-      path: `/api/admin/presence/runs/${id}/download`,
+      path: `/api/admin/presence/runs/${run.id}/download`,
       config: testConfig(),
       now: NOW,
       authorize: allow,
@@ -252,120 +432,134 @@ describe("presence audit API", () => {
     });
     assert.equal(early.statusCode, 409);
 
-    store.markPdf(`runs/${id}/report.pdf`);
+    store.objects.set(resultObjectKey({ businessId: run.businessId, id: run.id }), {
+      status: "needs_review",
+      quality_gate: { passed: false, failures: ["too_many_pages"] },
+      artifacts: { pdf: pdfObjectKey(run) },
+    });
+    const review = await handlePresenceRequest({
+      method: "GET",
+      path: `/api/admin/presence/runs/${run.id}`,
+      config: testConfig(),
+      now: NOW,
+      authorize: allow,
+      store,
+    });
+    const reviewRun = (review.body as { run: { status: string; completed: boolean; downloadReady: boolean; statusMessage: string } }).run;
+    assert.equal(reviewRun.status, "needs_review");
+    assert.equal(reviewRun.completed, false);
+    assert.equal(reviewRun.downloadReady, false);
+    assert.match(reviewRun.statusMessage, /35 pages/);
+
+    store.objects.set(resultObjectKey(run), {
+      status: "succeeded",
+      quality_gate: { passed: true, failures: [] },
+      artifacts: { pdf: pdfObjectKey(run) },
+    });
     const ready = await handlePresenceRequest({
       method: "POST",
-      path: `/api/admin/presence/runs/${id}/download`,
+      path: `/api/admin/presence/runs/${run.id}/download`,
       config: testConfig(),
       now: NOW,
       authorize: allow,
       store,
     });
     assert.equal(ready.statusCode, 200);
-    const body = ready.body as { downloadUrl: string; expiresIn: number };
-    assert.equal(body.expiresIn, 300);
-    assert.match(body.downloadUrl, new RegExp(id));
+    assert.equal((ready.body as { expiresIn: number }).expiresIn, 300);
+  });
+
+  it("releases the cap when a running run is still open after 16 minutes", async () => {
+    const store = memoryStore();
+    const config = testConfig({ realRunsEnabled: true });
+    const created = await postRun(store, { ...validBody(), testMode: false }, config);
+    const id = (created.body as { run: { id: string } }).run.id;
+    const stored = await store.getRun(id);
+    assert.ok(stored);
+    stored.status = "running";
+    stored.startedAt = new Date(NOW.getTime() - RUN_TIMEOUT_MS - 1000).toISOString();
+    await store.saveRun(stored, null, null);
     const listed = await handlePresenceRequest({
       method: "GET",
       path: "/api/admin/presence/runs",
-      config: testConfig(),
+      config,
       now: NOW,
       authorize: allow,
       store,
     });
-    const run = (listed.body as { runs: Array<{ downloadReady: boolean; status: string }> }).runs[0];
-    assert.equal(run.status, "completed");
-    assert.equal(run.downloadReady, true);
+    const run = (listed.body as { runs: Array<{ status: string; errorCode?: string; completed: boolean }> }).runs[0];
+    assert.equal(run?.status, "failed");
+    assert.equal(run?.errorCode, "timeout");
+    assert.equal(run?.completed, false);
+    assert.equal(await store.monthSpendCents("2026-10"), 0);
   });
 
-  it("applies a snake_case status file once, and ignores worker cost on a free test run", () => {
-    const real = sampleRun({ testMode: false, reservedPence: 500, costSource: "estimate" });
-    const first = applyWorkerStatus(
-      real,
-      { status: "in_progress", progress_percent: 40, message: "Crawling the site" },
-      "2026-10-24T19:00:00.000Z",
-      500,
-    );
-    assert.equal(first.costDeltaPence, 0);
-    assert.equal(first.run.status, "running");
-    assert.equal(first.run.progress, 40);
-
-    const done = applyWorkerStatus(
-      first.run,
-      { status: "completed", cost_gbp: 3.25, pdf_key: `runs/${real.id}/report.pdf` },
-      "2026-10-24T19:10:00.000Z",
-      500,
-    );
-    assert.equal(done.costDeltaPence, -175);
-    assert.equal(done.run.reservedPence, 325);
-    assert.equal(done.run.costSource, "worker");
-    const twice = applyWorkerStatus(done.run, { status: "completed", cost_gbp: 3.25 }, "2026-10-24T19:11:00.000Z", 500);
-    assert.equal(twice.costDeltaPence, 0);
-
-    const testRun = sampleRun({ testMode: true, reservedPence: 0, costSource: "test" });
-    const ignored = applyWorkerStatus(testRun, { status: "completed", cost_gbp: 9 }, "2026-10-24T19:10:00.000Z", 500);
-    assert.equal(ignored.costDeltaPence, 0);
-    assert.equal(ignored.run.reservedPence, 0);
-    assert.equal(ignored.run.costSource, "test");
-  });
-
-  it("does not turn a cancelled run back into a running one", () => {
-    const run = sampleRun({ status: "cancelled", costSource: "released", reservedPence: 0 });
-    const applied = applyWorkerStatus(run, { status: "running", progress: 10 }, "2026-10-24T19:00:00.000Z", 500);
-    assert.equal(applied.run.status, "cancelled");
-  });
-
-  it("sends the run id, test flag, and runs prefix to the worker", async () => {
+  it("replaces the flat reservation with the worker cost_usd on the next read", async () => {
     const store = memoryStore();
-    const created = await postRun(store, { ...validBody(), testMode: true, pageLimit: 12 }, testConfig());
-    const id = (created.body as { run: { id: string } }).run.id;
-    const payload = store.invocations[0] as Record<string, unknown>;
-    assert.equal(payload.runId, id);
+    const config = testConfig({ realRunsEnabled: true });
+    const created = await postRun(store, { ...validBody(), testMode: false }, config);
+    const body = created.body as { run: { id: string; businessId: string } };
+    store.objects.set(resultObjectKey(body.run), {
+      status: "succeeded",
+      cost_usd: { total: 8 },
+      artifacts: { pdf: pdfObjectKey(body.run) },
+    });
+    store.markPdf(pdfObjectKey(body.run));
+    const listed = await handlePresenceRequest({
+      method: "GET",
+      path: "/api/admin/presence/runs",
+      config,
+      now: NOW,
+      authorize: allow,
+      store,
+    });
+    const run = (listed.body as { runs: Array<{ costLabel: string; estimatedCostUsd: number; costUsd?: number; completed: boolean }> }).runs[0];
+    assert.equal(run?.completed, true);
+    assert.equal(run?.costUsd, 8);
+    assert.equal(run?.estimatedCostUsd, 8);
+    assert.equal(run?.costLabel, "Actual");
+    assert.equal(await store.monthSpendCents("2026-10"), 800);
+  });
+
+  it("sends the worker job and not the old output contract", async () => {
+    const store = memoryStore();
+    const created = await postRun(store, validBody(), testConfig());
+    const id = (created.body as { run: { id: string; businessId: string } }).run.id;
+    const payload = store.invocations[0] as WorkerJob;
+    assert.equal(validateJob(payload).run_id, payload.run_id);
     assert.equal(payload.run_id, id);
-    assert.equal(payload.testMode, true);
+    assert.equal(payload.business_id, "harbour-cafe");
     assert.equal(payload.test_mode, true);
-    assert.equal(payload.pageLimit, 12);
-    assert.equal(payload.page_limit, 12);
-    const output = payload.output as { prefix: string; pdfKey: string };
-    assert.equal(output.prefix, `runs/${id}/`);
-    assert.equal(output.pdfKey, `runs/${id}/report.pdf`);
-    assert.deepEqual(store.objects.get(`runs/${id}/input.json`), workerPayload(
-      (await store.getRun(id)) as PresenceRun,
-      testConfig(),
-    ));
+    assert.equal(payload.brand, "first_light");
+    assert.equal("output" in payload, false);
+    assert.equal("pageLimit" in payload, false);
+    assert.equal(store.objects.has(`runs/${id}/input.json`), false);
+    assert.equal(store.objects.has(`runs/harbour-cafe/${id}/input.json`), false);
   });
 });
 
 function validBody() {
   return {
-    businessName: "Harbour Cafe",
+    company: "Harbour Cafe",
     website: "https://harbour.example",
-    socials: {
-      instagram: "harbourcafe",
-      facebook: "https://www.facebook.com/harbourcafe",
-      tiktok: "",
-    },
-    location: "Belfast",
-    notes: "Independent cafe",
+    handles: { instagram: "@harbourcafe", facebook: "Harbour Cafe", tiktok: "" },
+    area: "Belfast",
     testMode: true,
   };
 }
 
 function testConfig(overrides: Partial<PresenceConfig> = {}): PresenceConfig {
-  const capGbp = overrides.capGbp ?? 50;
-  const estimateGbp = overrides.estimateGbp ?? 5;
+  const capUsd = overrides.capUsd ?? 65;
+  const estimateUsd = overrides.estimateUsd ?? 6;
   return {
-    pageLimit: 35,
     realRunsEnabled: false,
     defaultTestMode: true,
     workerConfigured: true,
     bucket: "audit-bucket",
-    brandConfigPath: "brand.json",
     ...overrides,
-    capGbp,
-    estimateGbp,
-    capPence: Math.round(capGbp * 100),
-    estimatePence: Math.round(estimateGbp * 100),
+    capUsd,
+    estimateUsd,
+    capCents: Math.round(capUsd * 100),
+    estimateCents: Math.round(estimateUsd * 100),
   };
 }
 
@@ -381,34 +575,35 @@ async function postRun(store: PresenceStore, body: unknown, config: PresenceConf
   });
 }
 
-async function allow() {}
+async function allow() {
+  return "admin:test";
+}
 
 function http(statusCode: number, message: string) {
   return Object.assign(new Error(message), { statusCode });
 }
 
 function sampleRun(overrides: Partial<PresenceRun> = {}): PresenceRun {
-  const id = "11111111-1111-4111-8111-111111111111";
   return {
-    id,
-    businessName: "Harbour Cafe",
-    website: "https://harbour.example/",
-    socials: { instagram: "", facebook: "", tiktok: "", linkedin: "", youtube: "", x: "" },
-    location: "",
-    notes: "",
+    id: RUN,
+    businessId: "harbour-cafe",
+    company: "Harbour Cafe",
+    website: "https://harbour.example",
+    handles: { instagram: "harbourcafe", facebook: "Harbour Cafe" },
+    business: "",
+    area: "Belfast",
+    brand: "first_light",
+    requestedBy: "admin:test",
     testMode: true,
-    pageLimit: 35,
     status: "queued",
-    progress: 0,
-    statusMessage: "Queued",
+    qualityFailures: [],
     fileName: "harbour-cafe-presence-audit.pdf",
-    s3Prefix: `runs/${id}/`,
-    reservedPence: 0,
+    reservedCents: 0,
     costSource: "test",
-    attempts: 1,
     month: "2026-10",
-    createdAt: "2026-10-24T18:30:00.000Z",
-    updatedAt: "2026-10-24T18:30:00.000Z",
+    trackingStopped: false,
+    createdAt: NOW.toISOString(),
+    updatedAt: NOW.toISOString(),
     ...overrides,
   };
 }
@@ -419,6 +614,7 @@ function memoryStore(): PresenceStore & {
   objects: Map<string, unknown>;
   pdfs: Set<string>;
   failInvoke: boolean;
+  invokePayload: Record<string, unknown> | null;
   markPdf: (key: string) => void;
 } {
   const runs = new Map<string, PresenceRun>();
@@ -431,6 +627,7 @@ function memoryStore(): PresenceStore & {
     objects,
     pdfs,
     failInvoke: false,
+    invokePayload: null as Record<string, unknown> | null,
     markPdf(key: string) {
       pdfs.add(key);
     },
@@ -438,26 +635,24 @@ function memoryStore(): PresenceStore & {
       return [...runs.values()].map(clone);
     },
     async getRun(id: string) {
-      const run = runs.get(id);
+      const run = [...runs.values()].find((item) => item.id === id);
       return run ? clone(run) : null;
     },
-    async monthSpendPence(month: string) {
+    async monthSpendCents(month: string) {
       return spend.get(month) || 0;
     },
     async insertRun(run: PresenceRun, reservation: SpendReservation | null) {
-      if (runs.has(run.id)) throw http(409, "Run already exists.");
+      if ([...runs.values()].some((item) => item.id === run.id)) throw http(409, "Run already exists.");
       applySpend(spend, reservation);
       runs.set(run.id, clone(run));
       store.inserts += 1;
     },
-    async saveRun(run: PresenceRun, reservation: SpendReservation | null) {
-      if (!runs.has(run.id)) throw http(404, "Audit run not found.");
+    async saveRun(run: PresenceRun, reservation: SpendReservation | null, claim: PortalClaim | null) {
+      const current = runs.get(run.id);
+      if (!current) throw http(404, "Audit run not found.");
+      if (claim && current.status !== "queued" && current.status !== "running") throw http(409, "The run already moved on.");
       applySpend(spend, reservation);
       runs.set(run.id, clone(run));
-    },
-    async writeObject(key: string, body: unknown) {
-      objects.set(key, body);
-      if (key.endsWith(".pdf")) pdfs.add(key);
     },
     async readObject(key: string) {
       const value = objects.get(key);
@@ -466,9 +661,10 @@ function memoryStore(): PresenceStore & {
     async pdfExists(key: string) {
       return pdfs.has(key);
     },
-    async invoke(payload: unknown) {
+    async invoke(payload: WorkerJob): Promise<InvokeOutcome> {
       if (store.failInvoke) throw new Error("invoke failed");
       store.invocations.push(payload);
+      return { statusCode: 202, payload: store.invokePayload };
     },
     async presign(key: string, downloadName: string) {
       return `https://downloads.invalid/${encodeURIComponent(key)}?name=${encodeURIComponent(downloadName)}`;
@@ -478,12 +674,13 @@ function memoryStore(): PresenceStore & {
 }
 
 function applySpend(spend: Map<string, number>, reservation: SpendReservation | null) {
-  if (!reservation || reservation.deltaPence === 0) return;
+  if (!reservation || reservation.deltaCents === 0) return;
   const current = spend.get(reservation.month) || 0;
-  if (reservation.mode === "reserve" && current + reservation.deltaPence > reservation.capPence) {
+  if (reservation.mode === "reserve" && current + reservation.deltaCents > reservation.capCents) {
     throw http(409, "Monthly cap reached.");
   }
-  spend.set(reservation.month, Math.max(0, current + reservation.deltaPence));
+  if (reservation.deltaCents < 0 && current < -reservation.deltaCents) throw http(409, "Spend update skipped.");
+  spend.set(reservation.month, current + reservation.deltaCents);
 }
 
 function clone<T>(value: T): T {
