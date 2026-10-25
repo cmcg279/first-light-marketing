@@ -714,6 +714,7 @@ export default function Admin() {
             runs={presenceRuns}
             spend={presenceSpend}
             saving={saving}
+            submitError={error}
             onCreate={handleCreatePresenceRun}
             onCancel={handleCancelPresenceRun}
             onRetry={handleRetryPresenceRun}
@@ -1437,6 +1438,7 @@ function PresenceAudits({
   runs,
   spend,
   saving,
+  submitError,
   onCreate,
   onCancel,
   onRetry,
@@ -1446,6 +1448,7 @@ function PresenceAudits({
   runs: PresenceRun[];
   spend: PresenceSpendSummary;
   saving: boolean;
+  submitError: string;
   onCreate: (input: PresenceRunInput) => Promise<void>;
   onCancel: (run: PresenceRun) => Promise<void>;
   onRetry: (run: PresenceRun) => Promise<void>;
@@ -1477,12 +1480,7 @@ function PresenceAudits({
 
   const usedPercent = spend.capUsd <= 0 ? 100 : Math.min(100, (spend.monthToDateUsd / spend.capUsd) * 100);
   const realBlocked = !spend.realRunsEnabled;
-  const inProgress = runs.some((run) => {
-    if (run.trackingStopped || (run.status !== "queued" && run.status !== "running")) return false;
-    const started = Date.parse(run.createdAt);
-    return !Number.isFinite(started) || Date.now() - started <= 16 * 60 * 1000;
-  });
-  const canSubmit = Boolean(company.trim() && website.trim() && spend.workerConfigured) && !saving && !inProgress;
+  const canSubmit = Boolean(company.trim() && website.trim() && spend.workerConfigured) && !saving;
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -1577,8 +1575,8 @@ function PresenceAudits({
                 This stack will refuse the run. Leave the free test run on.
               </p>
             )}
-            {inProgress && (
-              <p className="rounded-lg border border-coral/20 bg-white px-3 py-2 font-sans text-xs leading-relaxed text-coral">
+            {submitError === "A run is already in progress." && (
+              <p className="rounded-lg border border-coral/20 bg-white px-3 py-2 font-sans text-xs leading-relaxed text-coral" role="alert">
                 A run is already in progress.
               </p>
             )}
