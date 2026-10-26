@@ -77,7 +77,9 @@ const ERROR_TEXT: Record<string, string> = {
   start_failed: "The audit worker could not be started.",
 };
 const TRACKING_STOPPED =
-  "Tracking stopped. The worker has no cancel, so this audit may still be running and the spend may already be committed. Another audit cannot start until this one finishes or 16 minutes have passed.";
+  "Tracking stopped. The worker has no cancel, so this report may still be running and the spend may already be committed. Another report cannot start until this one finishes or 16 minutes have passed.";
+const FACEBOOK_WHITESPACE =
+  "Facebook takes a page URL or its URL name, with no spaces. For example https://www.facebook.com/VPJebb.";
 
 export type PortalClaim = "timeout" | "bad_input" | "start_failed";
 export type PresenceStatus = "queued" | "running" | "succeeded" | "needs_review" | "failed" | "cancelled";
@@ -327,13 +329,8 @@ export function validateJob(event: unknown): WorkerJob {
     }
     handles[key] = value.trim().replace(/^@/, "");
   }
-  const facebook = (handlesIn as Record<string, unknown>).facebook;
-  if (facebook !== undefined && facebook !== null && facebook !== "") {
-    if (typeof facebook !== "string" || !facebook.trim() || facebook.length > 200) {
-      fail("handles.facebook must be a Facebook Page name or address");
-    }
-    handles.facebook = facebook.trim();
-  }
+  const facebook = readFacebookHandle((handlesIn as Record<string, unknown>).facebook);
+  if (facebook) handles.facebook = facebook;
 
   let brand: string | null = null;
   if (job.brand !== undefined && job.brand !== null) {
@@ -896,15 +893,7 @@ async function refreshRun(input: PresenceRequest, run: PresenceRun, now: Date, r
 }
 
 async function persistProjection(input: PresenceRequest, projected: Projection) {
-  const reservation =
-    projected.costDeltaCents !== 0
-      ? {
-          month: projected.run.month,
-          deltaCents: projected.costDeltaCents,
-          mode: (projected.costDeltaCents < 0 ? "release" : "reconcile") as SpendReservation["mode"],
-          capCents: input.config.capCents,
-        }
-      : null;
+  const reservation = spendReservation(projected, input.config.capCents);
   try {
     await input.store.saveRun(projected.run, reservation, projected.claim);
     await releaseLockIfFinished(input, projected.run);
@@ -915,13 +904,9 @@ async function persistProjection(input: PresenceRequest, projected: Projection) 
       if (!fresh) throw error;
       const again = projectRun(fresh, new Date(projected.run.updatedAt), input.config);
       again.claim = null;
+      const againReservation = spendReservation(again, input.config.capCents);
       if (again.costDeltaCents !== 0) {
-        await input.store.saveRun(again.run, {
-          month: again.run.month,
-          deltaCents: again.costDeltaCents,
-          mode: again.costDeltaCents < 0 ? "release" : "reconcile",
-          capCents: input.config.capCents,
-        }, null);
+        await input.store.saveRun(again.run, againReservation, null);
       }
       await releaseLockIfFinished(input, again.run);
       return again.run;
@@ -1057,13 +1042,27 @@ function parseHandles(value: unknown): PresenceHandles {
     if (!HANDLE_RULES[key].pattern.test(handle)) throw new PresenceError(422, `handles.${key} must be ${HANDLE_RULES[key].what}`);
     handles[key] = handle;
   }
-  if (source.facebook !== undefined && source.facebook !== null && source.facebook !== "") {
-    if (typeof source.facebook !== "string" || !source.facebook.trim() || source.facebook.length > 200) {
-      throw new PresenceError(422, "handles.facebook must be a Facebook Page name or address");
-    }
-    handles.facebook = source.facebook.trim();
-  }
+  const facebook = readFacebookHandle(source.facebook);
+  if (facebook) handles.facebook = facebook;
   return handles;
+}
+
+function readFacebookHandle(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !value.trim() || value.length > 200) {
+    fail("handles.facebook must be a Facebook Page name or address");
+  }
+  const handle = value.trim();
+  if (/\s/.test(handle)) fail(FACEBOOK_WHITESPACE);
+  return handle;
+}
+
+function spendReservation(projected: Projection, capCents: number): SpendReservation | null {
+  if (projected.costDeltaCents === 0) return null;
+  const mode: SpendReservation["mode"] = projected.costDeltaCents < 0 ? "release" : "reconcile";
+  // No cap means the month counter was never created. Recording cost_usd stays on the run row.
+  if (mode === "reconcile" && capCents <= 0) return null;
+  return { month: projected.run.month, deltaCents: projected.costDeltaCents, mode, capCents };
 }
 
 function checkWebsite(value: unknown) {

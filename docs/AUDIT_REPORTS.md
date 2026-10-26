@@ -19,7 +19,7 @@ Top-level keys only: `schema`, `run_id`, `business_id`, `requested_by`, `kind`, 
 | `kind` | `admin` |
 | `company` | Required, at most 120 characters |
 | `website` | Required `https://` URL. No credentials, no IP address, no `localhost`, no host without a dot, no `.local` / `.internal` / `.localhost`, port empty or 443, length at most 300 |
-| `handles` | Optional `instagram`, `tiktok`, and `facebook` only. LinkedIn, YouTube, and X are rejected. Facebook is a page URL such as `https://www.facebook.com/VPJebb`, or the name from that URL. The Reports form rejects a Facebook value that contains spaces before it submits |
+| `handles` | Optional `instagram`, `tiktok`, and `facebook` only. LinkedIn, YouTube, and X are rejected. Facebook is a page URL such as `https://www.facebook.com/VPJebb`, or the name from that URL. A Facebook value that contains spaces is rejected by the Reports form before submit, and the API returns 422 with the same message |
 | `brand` | `first_light`. `BRAND_IDS` in `api/presence-audit.ts` (`first_light`, `example_brand`) must stay the same as the `brands:` entries in the worker's `social_audit/brands.yaml` |
 | `options` | Optional legal name (`business`, ≤200), area (`competitors.area`, ≤60), and on retry `compare_to_run_id` of the previous run |
 | `test_mode` | The free-test checkbox |
@@ -186,7 +186,7 @@ export FIRST_LIGHT_AUDIT_WORKER_EPHEMERAL_MB="512"
 1. Deploy dev with the image tag and without `FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL`.
 2. Open the dev site `/admin` and sign in.
 3. Open **Reports**. **Free test run** is on. Leave it on.
-4. Enter a company and an `https://` website. Instagram and TikTok are optional. Facebook, if set, is a page URL such as `https://www.facebook.com/VPJebb` or the name from that URL, with no spaces.
+4. Enter a company and an `https://` website. Instagram and TikTok are optional. Facebook, if set, is a page URL such as `https://www.facebook.com/VPJebb` or the name from that URL, with no spaces. The API returns 422 for a Facebook value that contains spaces.
 5. Choose **Start free test**. The row should move from Queued to Running to Completed. The cost column stays an em dash until the run finishes.
 6. **Download** returns a PDF link that expires after five minutes. The PDF is sample data.
 

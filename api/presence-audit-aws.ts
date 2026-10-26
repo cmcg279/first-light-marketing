@@ -25,7 +25,7 @@ const s3 = new S3Client({});
 const lambda = new LambdaClient({});
 const DOWNLOAD_SECONDS = 300;
 
-export function createAwsPresenceStore(): PresenceStore {
+export function createAwsPresenceStore(documentClient: DynamoDBDocumentClient = db): PresenceStore {
   const tableName = process.env.TABLE_NAME || "";
   const bucket = process.env.AUDIT_REPORTS_BUCKET_NAME || "";
 
@@ -34,7 +34,7 @@ export function createAwsPresenceStore(): PresenceStore {
     getRun: (id) => getRun(tableName, id),
     monthSpendCents: (month) => monthSpendCents(tableName, month),
     insertRun: (run, reservation) => insertRun(tableName, run, reservation),
-    saveRun: (run, reservation, claim) => saveRun(tableName, run, reservation, claim),
+    saveRun: (run, reservation, claim) => saveRun(documentClient, tableName, run, reservation, claim),
     getRunLock: () => getRunLock(tableName),
     acquireRunLock: (runId, now) => acquireRunLock(tableName, runId, now),
     releaseRunLock: (runId) => releaseRunLock(tableName, runId),
@@ -95,21 +95,22 @@ async function insertRun(tableName: string, run: PresenceRun, reservation: Spend
 }
 
 async function saveRun(
+  database: DynamoDBDocumentClient,
   tableName: string,
   run: PresenceRun,
   reservation: SpendReservation | null,
   claim: PortalClaim | null,
 ) {
   const update = runUpdate(tableName, run, claim);
-  const spend = reservation && reservation.deltaCents !== 0 ? spendChange(tableName, reservation) : undefined;
+  const spend = spendWrite(tableName, reservation);
   try {
-    await db.send(new TransactWriteCommand({ TransactItems: spend ? [update, spend] : [update] }));
+    await database.send(new TransactWriteCommand({ TransactItems: spend ? [update, spend] : [update] }));
   } catch (error) {
     if (reservation?.mode === "reserve" && isConditionalFailure(error)) throw new PresenceError(409, "Monthly cap reached.");
     if (claim && isConditionalFailure(error)) throw new PresenceError(409, "The run already moved on.");
     if (reservation && isConditionalFailure(error)) {
       console.error("Presence spend update was skipped.");
-      await db.send(new UpdateCommand(runUpdate(tableName, run, null).Update));
+      await database.send(new UpdateCommand(runUpdate(tableName, run, null).Update));
       return;
     }
     throw error;
@@ -168,6 +169,14 @@ function runUpdate(tableName: string, run: PresenceRun, claim: PortalClaim | nul
       ExpressionAttributeValues: values,
     },
   };
+}
+
+function spendWrite(tableName: string, reservation: SpendReservation | null) {
+  if (!reservation || reservation.deltaCents === 0) return undefined;
+  // Reconciling with the cap off must not touch PRESENCE_SPEND. That item is only
+  // created by a reservation, so attribute_exists(PK) would fail and drop the run update.
+  if (reservation.mode === "reconcile" && reservation.capCents <= 0) return undefined;
+  return spendChange(tableName, reservation);
 }
 
 function spendChange(tableName: string, reservation: SpendReservation) {

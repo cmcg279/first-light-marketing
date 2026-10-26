@@ -87,7 +87,7 @@ describe("worker contract", () => {
     assert.equal(payload.kind, "admin");
     assert.equal(payload.company, "Harbour Cafe");
     assert.equal(payload.website, "https://harbour.example");
-    assert.deepEqual(payload.handles, { instagram: "harbourcafe", facebook: "Harbour Cafe" });
+    assert.deepEqual(payload.handles, { instagram: "harbourcafe", facebook: "https://www.facebook.com/VPJebb" });
     assert.equal(payload.brand, "first_light");
     assert.equal(payload.test_mode, true);
     assert.equal(payload.options.compare_to_run_id, null);
@@ -129,6 +129,15 @@ describe("worker contract", () => {
     assert.throws(() => validateJob({ ...base, handles: { tiktok: "a" } }), /TikTok/);
     assert.throws(() => validateJob({ ...base, handles: { youtube: "harbour" } }), /youtube/);
     assert.throws(() => validateJob({ ...base, handles: { x: "harbour" } }), /unknown field/);
+    for (const facebook of ["Harbour Cafe", "https://www.facebook.com/VP Jebb"]) {
+      assert.throws(() => validateJob({ ...base, handles: { facebook } }), /no spaces/);
+      assert.throws(() => validateJob({ ...base, handles: { facebook } }), /facebook\.com\/VPJebb/);
+    }
+    assert.equal(validateJob({ ...base, handles: { facebook: "VPJebb" } }).handles.facebook, "VPJebb");
+    assert.equal(
+      validateJob({ ...base, handles: { facebook: "https://www.facebook.com/VPJebb" } }).handles.facebook,
+      "https://www.facebook.com/VPJebb",
+    );
   });
 
   it("lists runs from GSI1PK=RUNS and does not scan", () => {
@@ -285,6 +294,8 @@ describe("presence audit API", () => {
       [{ ...validBody(), website: "https://printer.local" }, /internal host/],
       [{ ...validBody(), handles: { linkedin: "harbour", instagram: "harbour" } }, /linkedin/],
       [{ ...validBody(), handles: { instagram: "bad handle" } }, /Instagram/],
+      [{ ...validBody(), handles: { facebook: "Harbour Cafe" } }, /no spaces/],
+      [{ ...validBody(), handles: { facebook: "https://www.facebook.com/VP Jebb" } }, /facebook\.com\/VPJebb/],
       [{ ...validBody(), testMode: "true" }, /true or false/],
       ["{", /Invalid JSON/],
     ];
@@ -355,9 +366,13 @@ describe("presence audit API", () => {
     const recorded = (read.body as { run: { costUsd?: number; status: string } }).run;
     assert.equal(recorded.status, "succeeded");
     assert.equal(recorded.costUsd, 1.25);
+    const saved = await store.getRun(started.id);
+    assert.equal(saved?.costUsd, 1.25);
+    assert.equal(saved?.costSource, "worker");
+    assert.equal(await store.monthSpendCents("2026-10"), 0);
     const second = await postRun(store, { ...validBody(), company: "Second Co", testMode: false }, config);
     assert.equal(second.statusCode, 200);
-    assert.equal(await store.monthSpendCents("2026-10"), 125);
+    assert.equal(await store.monthSpendCents("2026-10"), 0);
   });
 
   it("blocks a real run past the cap and still allows a free test", async () => {
@@ -702,7 +717,7 @@ function validBody() {
   return {
     company: "Harbour Cafe",
     website: "https://harbour.example",
-    handles: { instagram: "@harbourcafe", facebook: "Harbour Cafe", tiktok: "" },
+    handles: { instagram: "@harbourcafe", facebook: "https://www.facebook.com/VPJebb", tiktok: "" },
     area: "Belfast",
     testMode: true,
   };
@@ -773,7 +788,7 @@ function sampleRun(overrides: Partial<PresenceRun> = {}): PresenceRun {
     businessId: "harbour-cafe",
     company: "Harbour Cafe",
     website: "https://harbour.example",
-    handles: { instagram: "harbourcafe", facebook: "Harbour Cafe" },
+    handles: { instagram: "harbourcafe", facebook: "https://www.facebook.com/VPJebb" },
     business: "",
     area: "Belfast",
     brand: "first_light",

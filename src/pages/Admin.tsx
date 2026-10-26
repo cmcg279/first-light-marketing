@@ -214,35 +214,45 @@ export default function Admin() {
     setLoading(true);
     setError("");
 
-    Promise.all([
-      getAdminLeads(),
-      getManagedContent(),
-      getMediaAssets(),
-      getAuditSettings(),
-      getAuditReports(),
-      getPresenceRuns(),
-    ])
-      .then(([nextLeads, nextContent, nextMediaAssets, nextAuditSettings, nextAuditReports, nextPresence]) => {
+    const noteLoadError = (err: unknown) => {
+      if (cancelled) return;
+      setError(err instanceof Error ? err.message : "Could not load admin data.");
+      if (err instanceof Error && err.message.toLowerCase().includes("log in")) {
+        clearAdminToken();
+        setToken("");
+      }
+    };
+
+    const main = Promise.all([getAdminLeads(), getManagedContent(), getMediaAssets(), getAuditSettings()])
+      .then(([nextLeads, nextContent, nextMediaAssets, nextAuditSettings]) => {
         if (cancelled) return;
         setLeads(nextLeads);
         setContent(nextContent);
         setMediaAssets(nextMediaAssets);
         setAuditSettings(nextAuditSettings);
-        setAuditReports(nextAuditReports);
+      })
+      .catch(noteLoadError);
+
+    const presence = getPresenceRuns()
+      .then((nextPresence) => {
+        if (cancelled) return;
         setPresenceRuns(nextPresence.runs);
         setPresenceSpend(nextPresence.spend);
       })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Could not load admin data.");
-        if (err instanceof Error && err.message.toLowerCase().includes("log in")) {
-          clearAdminToken();
-          setToken("");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      .catch(noteLoadError);
+
+    const legacy = SHOW_LEGACY_AUDIT_REPORTS
+      ? getAuditReports()
+          .then((nextAuditReports) => {
+            if (cancelled) return;
+            setAuditReports(nextAuditReports);
+          })
+          .catch(noteLoadError)
+      : Promise.resolve();
+
+    void Promise.all([main, presence, legacy]).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
 
     return () => {
       cancelled = true;
@@ -502,9 +512,9 @@ export default function Admin() {
       const result = await createPresenceRun(input);
       setPresenceRuns((current) => [result.run, ...current.filter((run) => run.id !== result.run.id)]);
       setPresenceSpend(result.spend);
-      setStatus(result.run.testMode ? "Free test run queued." : "Real audit queued.");
+      setStatus(result.run.testMode ? "Free test run queued." : "Real report queued.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start the audit.");
+      setError(err instanceof Error ? err.message : "Could not start the report.");
     } finally {
       setSaving(false);
     }
@@ -526,7 +536,7 @@ export default function Admin() {
       setPresenceSpend(result.spend);
       setStatus("Tracking stopped. Any held reservation was released. Spend that is already committed is not undone. Another report waits until this run finishes or 16 minutes have passed.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not stop tracking the audit.");
+      setError(err instanceof Error ? err.message : "Could not stop tracking the report.");
     } finally {
       setSaving(false);
     }
@@ -541,9 +551,9 @@ export default function Admin() {
       const result = await retryPresenceRun(run.id);
       setPresenceRuns((current) => [result.run, ...current.filter((item) => item.id !== result.run.id)]);
       setPresenceSpend(result.spend);
-      setStatus(result.run.testMode ? "A new free test run was queued." : "A new audit was queued.");
+      setStatus(result.run.testMode ? "A new free test run was queued." : "A new report was queued.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not retry the audit.");
+      setError(err instanceof Error ? err.message : "Could not retry the report.");
     } finally {
       setSaving(false);
     }
@@ -557,7 +567,7 @@ export default function Admin() {
       const downloadUrl = await getPresenceDownloadUrl(run.id);
       window.location.assign(downloadUrl);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not download the audit.");
+      setError(err instanceof Error ? err.message : "Could not download the report.");
     }
   }
 
@@ -1508,7 +1518,7 @@ function PresenceAudits({
         <form onSubmit={submit} className="rounded-lg border border-body/10 bg-cream p-6">
           <h2 className="font-serif text-2xl font-bold text-body">New report</h2>
           <p className="mt-2 font-sans text-sm leading-relaxed text-body/60">
-            Company and an https website. Instagram, TikTok, and Facebook are optional. A PDF is ready to download only when the audit succeeds.
+            Company and an https website. Instagram, TikTok, and Facebook are optional. A PDF is ready to download only when the report succeeds.
           </p>
           {!spend.workerConfigured && (
             <p className="mt-4 rounded-lg border border-body/10 bg-white px-3 py-2 font-sans text-sm leading-relaxed text-body/70">
@@ -1549,7 +1559,7 @@ function PresenceAudits({
                     On by default. The worker stays offline: sample data, no Apify, and no AI charge.
                     {realBlocked
                       ? " Real runs are switched off on this stack until FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true."
-                      : " Turn this off to start a real audit."}
+                      : " Turn this off to start a real report."}
                   </span>
                 </span>
               </span>
@@ -1570,14 +1580,14 @@ function PresenceAudits({
             disabled={!canSubmit || (!testMode && realBlocked)}
             className="mt-7 rounded-full bg-coral px-6 py-3 font-sans text-sm font-semibold uppercase tracking-wider text-off-white transition hover:bg-coral-700 disabled:opacity-40"
           >
-            {saving ? "Starting..." : testMode ? "Start free test" : "Start real audit"}
+            {saving ? "Starting..." : testMode ? "Start free test" : "Start real report"}
           </button>
         </form>
 
         <div className="overflow-hidden rounded-lg border border-body/10 bg-white">
           <div className="flex flex-col gap-4 border-b border-body/10 p-6 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h2 className="font-serif text-2xl font-bold text-body">Runs</h2>
+              <h2 className="font-serif text-2xl font-bold text-body">Reports</h2>
               <p className="mt-2 font-sans text-sm text-body/60">
                 Status updates every few seconds while a run is queued or in progress. Cost appears when the run has finished.
               </p>
