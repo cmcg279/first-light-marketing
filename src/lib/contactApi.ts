@@ -15,13 +15,15 @@ export function getContactApiUrl() {
 }
 
 export async function submitContactLead(body: unknown) {
+  const requestBody = JSON.stringify(body);
   const response = await fetch(getContactApiUrl(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
+      "x-amz-content-sha256": await sha256Hex(requestBody),
     },
-    body: JSON.stringify(body),
+    body: requestBody,
   });
 
   const contentType = response.headers.get("content-type") || "";
@@ -44,4 +46,9 @@ export async function submitContactLead(body: unknown) {
     leadId: string;
     message: string;
   };
+}
+
+async function sha256Hex(body: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

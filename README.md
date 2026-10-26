@@ -11,20 +11,20 @@ npm run dev        # → http://localhost:5173
 
 ## Deploy
 
+Deploy the dev stack before production. The full sequence, MFA enrolment, and the environment variables are in [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ```bash
-aws configure                          # once, if this machine is not already authenticated
+aws login                              # once, if this machine is not already authenticated
 npx -w cdk cdk bootstrap               # once per AWS account/region
-export FIRST_LIGHT_ADMIN_PASSWORD="use-a-strong-password"
-export FIRST_LIGHT_ADMIN_SESSION_SECRET="use-a-long-random-secret"
-export FIRST_LIGHT_AUDIT_RUNNER_TOKEN="use-a-long-random-runner-token"
-export FIRST_LIGHT_DOMAIN_NAMES="www.firstlightmarketing.co.uk,firstlightmarketing.co.uk"
-export FIRST_LIGHT_CERTIFICATE_ARN="arn:aws:acm:us-east-1:004947744329:certificate/your-certificate-id"
-npm run deploy                         # builds for AWS, deploys S3 + CloudFront + Lambda + SES + DynamoDB
+npm run deploy:dev                     # FirstLight-Dev, cloudfront.net URL, no customer email
+npm run deploy                         # production stack FirstLight
 ```
 
-The deployed site posts the lead form to `/api/contact`, which CloudFront routes to the Lambda Function URL. No frontend `.env` value is needed for AWS hosting.
+Admin sign-in is Cognito only. There is no shared admin password. MFA stays optional on the first production deploy; a later deploy sets `FIRST_LIGHT_MFA=required`. Set `FIRST_LIGHT_AUDIT_RUNNER_TOKEN` as well if the Synology report runner should be enabled. The Lambda runtime stays Node.js 20 until a separate deploy sets `FIRST_LIGHT_LAMBDA_RUNTIME=nodejs24.x`.
 
-After the first deploy, AWS SES sends a verification email to `niamh@firstlightmarketing.co.uk`. The contact form will store leads in DynamoDB immediately, but email delivery will not work until that SES verification link has been clicked.
+The deployed site posts the lead form to `/api/contact`, which CloudFront routes to the Lambda function URL. The function URL itself rejects unsigned calls. No frontend `.env` value is needed for AWS hosting.
+
+After the first production deploy, AWS SES sends a verification email to `niamh@firstlightmarketing.co.uk` if that identity is new. The contact form stores leads in DynamoDB immediately, but email delivery waits until that SES verification link has been clicked. The dev stack does not send email.
 
 ## Admin portal
 
@@ -35,7 +35,7 @@ The admin portal is available at `/admin` after deployment. It lets Niamh:
 - toggle that announcement live or hidden
 - create, upload, download and delete audit report PDFs
 
-The stack will not deploy unless `FIRST_LIGHT_ADMIN_PASSWORD` and `FIRST_LIGHT_ADMIN_SESSION_SECRET` are set in your shell. Set `FIRST_LIGHT_AUDIT_RUNNER_TOKEN` as well if the Synology report runner should be enabled.
+Sign-in uses the Cognito hosted UI. TOTP is turned on only in a later deploy, after it has been tested on dev. See [docs/DEPLOY.md](docs/DEPLOY.md) before deploying this to production, so the existing admin user is not locked out.
 
 ## Synology report runner
 
@@ -56,8 +56,8 @@ Then run `npm run dev`.
 | Frontend | Vite + React + TypeScript + Tailwind |
 | Routing | React Router (BrowserRouter) |
 | Hosting | S3 + CloudFront (static) |
-| Contact form | CloudFront `/api/contact` → Lambda Function URL → DynamoDB + SES |
-| Admin portal | CloudFront `/api/admin/*` → Lambda Function URL → DynamoDB |
+| Contact form | CloudFront `/api/contact` → IAM-only Lambda function URL (OAC) → DynamoDB + SES |
+| Admin portal | CloudFront `/api/admin/*` → IAM-only Lambda function URL (OAC) → Cognito + DynamoDB |
 
 ## Adding images
 

@@ -2,6 +2,9 @@
   "app": "ts-node --prefer-ts-exts bin/app.ts",
   "context": {
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
-    "@aws-cdk/core:checkSecretUsage": true
+    "@aws-cdk/core:checkSecretUsage": true,
+    "alertEmail": "niamh@firstlightmarketing.co.uk",
+    "mfa": "optional",
+    "lambdaRuntime": "nodejs20.x"
   }
 }

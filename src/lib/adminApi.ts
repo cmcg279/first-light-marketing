@@ -327,7 +327,7 @@ export async function getPublicBlogPost(slug: string) {
 
 function authHeaders() {
   return {
-    Authorization: `Bearer ${getAdminToken()}`,
+    "X-First-Light-Authorization": `Bearer ${getAdminToken()}`,
   };
 }
 
@@ -353,6 +353,11 @@ async function pkceChallenge(verifier: string) {
   return base64UrlEncode(new Uint8Array(hash));
 }
 
+async function sha256Hex(body: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function base64UrlEncode(bytes: Uint8Array) {
   let binary = "";
   bytes.forEach((byte) => {
@@ -363,18 +368,32 @@ function base64UrlEncode(bytes: Uint8Array) {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const requestBody = typeof init.body === "string" ? init.body : undefined;
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
+    body: requestBody,
     headers: {
       "Content-Type": "application/json",
+      ...(requestBody !== undefined ? { "x-amz-content-sha256": await sha256Hex(requestBody) } : {}),
       ...init.headers,
     },
   });
 
-  const body = await response.json().catch(() => ({}));
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(
+      response.ok
+        ? "The server returned a page instead of JSON. The API call did not succeed."
+        : `Request failed (${response.status}). The server did not return JSON.`,
+    );
+  }
+
+  const body = await response.json().catch(() => {
+    throw new Error("The server returned invalid JSON.");
+  });
 
   if (!response.ok) {
-    throw new Error(body.error || "Request failed.");
+    throw new Error(body.error || `Request failed (${response.status}).`);
   }
 
   return body as T;
