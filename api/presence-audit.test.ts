@@ -1059,6 +1059,73 @@ describe("presence audit API", () => {
     assert.equal(retryJob.options.compare_to_run_id, failedRun.id);
     assert.notEqual(retryJob.run_id, failedRun.id);
   });
+
+  it("puts type of business on options.competitors.service beside area, and retry keeps it", async () => {
+    const store = memoryStore();
+    const response = await postRun(store, { ...validBody(), area: "Cork", service: "  gelato shop  " }, testConfig());
+    assert.equal(response.statusCode, 200);
+    const job = store.invocations[0] as WorkerJob;
+    const competitors = job.options.competitors as { area: string | null; service: string | null };
+    assert.equal(competitors.area, "Cork");
+    assert.equal(competitors.service, "gelato shop");
+    assert.equal("service" in job.options, false);
+    const shown = response.body as { run: { service: string; area: string } };
+    assert.equal(shown.run.service, "gelato shop");
+    assert.equal(shown.run.area, "Cork");
+
+    const blank = memoryStore();
+    const without = await postRun(blank, validBody(), testConfig());
+    assert.equal(without.statusCode, 200);
+    const plain = (blank.invocations[0] as WorkerJob).options;
+    assert.equal((plain.competitors as { service: string | null }).service, null);
+    assert.equal((plain.competitors as { area: string | null }).area, "Belfast");
+    assert.equal("service" in plain, false);
+
+    const onlyService = workerPayload(sampleRun({ area: "", service: "gelato shop" }));
+    assert.equal((onlyService.options.competitors as { service: string | null }).service, "gelato shop");
+    assert.equal((onlyService.options.competitors as { area: string | null }).area, null);
+    assert.equal("service" in onlyService.options, false);
+
+    const base = workerPayload(sampleRun());
+    assert.throws(() => validateJob({ ...base, options: { ...base.options, service: "gelato shop" } }), /unknown field/);
+
+    const tooLong = await postRun(memoryStore(), { ...validBody(), service: "x".repeat(61) }, testConfig());
+    assert.equal(tooLong.statusCode, 422);
+    assert.match((tooLong.body as { error: string }).error, /Type of business/);
+
+    const unknown = await postRun(memoryStore(), { ...validBody(), options: { service: "gelato shop" } }, testConfig());
+    assert.equal(unknown.statusCode, 422);
+    assert.match((unknown.body as { error: string }).error, /Unknown field/);
+
+    const stored = sampleRun({ area: "Cork", service: "gelato shop" });
+    const roundTrip = runFromItem(runToItem(stored, workerPayload(stored)));
+    assert.equal(roundTrip?.service, "gelato shop");
+    assert.equal(roundTrip?.area, "Cork");
+    const fromStored = workerPayload({ ...roundTrip!, compareToRunId: roundTrip!.id });
+    assert.equal((fromStored.options.competitors as { service: string; area: string }).service, "gelato shop");
+    assert.equal((fromStored.options.competitors as { area: string }).area, "Cork");
+    assert.equal("service" in fromStored.options, false);
+
+    const retryStore = memoryStore();
+    retryStore.invokePayload = { status: "failed", error: { code: "internal", message: "stopped" } };
+    const failed = await postRun(retryStore, { ...validBody(), area: "Cork", service: "gelato shop" }, testConfig());
+    assert.equal(failed.statusCode, 200);
+    const failedId = (failed.body as { run: { id: string } }).run.id;
+    const retried = await handlePresenceRequest({
+      method: "POST",
+      path: `/api/admin/presence/runs/${failedId}/retry`,
+      config: testConfig(),
+      now: NOW,
+      authorize: allow,
+      store: retryStore,
+    });
+    assert.equal(retried.statusCode, 200);
+    const retryJob = retryStore.invocations.at(-1) as WorkerJob;
+    assert.equal((retryJob.options.competitors as { service: string }).service, "gelato shop");
+    assert.equal((retryJob.options.competitors as { area: string }).area, "Cork");
+    assert.equal(retryJob.options.compare_to_run_id, failedId);
+    assert.equal("service" in retryJob.options, false);
+  });
 });
 
 function validBody() {
@@ -1150,6 +1217,7 @@ function sampleRun(overrides: Partial<PresenceRun> = {}): PresenceRun {
     handles: { instagram: "harbourcafe", facebook: "https://www.facebook.com/VPJebb" },
     business: "",
     area: "Belfast",
+    service: "",
     googleMaps: "",
     brand: "first_light",
     requestedBy: "admin:test",

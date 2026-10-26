@@ -37,6 +37,7 @@ describe("new report form", () => {
     facebook: "GenoaCafe",
     legalName: "Genoa Cafe Ltd",
     area: "Cork",
+    service: "gelato shop",
     googleMaps: "https://www.google.com/maps/place/Genoa",
     testMode: false,
   };
@@ -49,6 +50,7 @@ describe("new report form", () => {
     assert.equal(cleared.website, "");
     assert.equal(cleared.googleMaps, "");
     assert.equal(cleared.area, "");
+    assert.equal(cleared.service, "");
     assert.equal(cleared.instagram, "");
     assert.equal(cleared.tiktok, "");
     assert.equal(cleared.facebook, "");
@@ -68,6 +70,11 @@ describe("new report form", () => {
       "Website: No website. Maps: ChIJN1t_tDeuEmsRUsoyG83frY4.",
     );
     assert.equal(newReportWillUseLine(" \n ", "\t"), "Website: No website. Maps: No Maps link.");
+    assert.equal(
+      newReportWillUseLine("https://genoa-cafe.square.site", "", "  gelato shop  "),
+      "Website: https://genoa-cafe.square.site. Maps: No Maps link. Type of business: gelato shop.",
+    );
+    assert.equal(newReportWillUseLine("", "https://maps.google.com/?cid=1", "   "), "Website: No website. Maps: https://maps.google.com/?cid=1.");
   });
 });
 

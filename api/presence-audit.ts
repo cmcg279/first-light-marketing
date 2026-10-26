@@ -49,6 +49,7 @@ const REQUEST_KEYS = new Set([
   "handles",
   "business",
   "area",
+  "service",
   "googleMaps",
   "testMode",
   "test_mode",
@@ -135,6 +136,7 @@ export interface PresenceRun {
   handles: PresenceHandles;
   business: string;
   area: string;
+  service: string;
   googleMaps: string;
   brand: string;
   requestedBy: string;
@@ -414,7 +416,7 @@ export function workerPayload(run: PresenceRun): WorkerJob {
     brand: run.brand || DEFAULT_BRAND,
     options: {
       ...(run.business ? { business: run.business } : {}),
-      ...(run.area ? { competitors: { area: run.area } } : {}),
+      ...competitorsOption(run),
       ...(run.compareToRunId ? { compare_to_run_id: run.compareToRunId } : {}),
       ...(run.googleMaps ? { google_maps: run.googleMaps } : {}),
     },
@@ -523,6 +525,7 @@ export function runFromItem(item: Record<string, unknown>): PresenceRun | null {
     },
     business: text(options.business),
     area: text(competitors.area),
+    service: text(competitors.service),
     googleMaps: typeof options.google_maps === "string" ? options.google_maps : "",
     brand: text(job.brand) || DEFAULT_BRAND,
     requestedBy: text(item.requested_by) || "admin",
@@ -623,6 +626,7 @@ export function publicRun(run: PresenceRun) {
     handles,
     business: run.business,
     area: run.area,
+    service: run.service,
     googleMaps: run.googleMaps,
     testMode: run.testMode,
     status: run.status,
@@ -761,6 +765,7 @@ async function createRun(input: PresenceRequest, now: Date, requestedBy: string,
     handles: requested.handles,
     business: requested.business,
     area: requested.area,
+    service: requested.service,
     googleMaps: requested.googleMaps,
     brand: DEFAULT_BRAND,
     requestedBy: requestedBy.slice(0, 200),
@@ -1006,6 +1011,7 @@ interface ParsedRun {
   handles: PresenceHandles;
   business: string;
   area: string;
+  service: string;
   googleMaps: string;
   businessId: string;
   testMode: boolean;
@@ -1022,6 +1028,10 @@ function parseRunInput(rawBody: string | undefined, config: PresenceConfig): Par
   const handles = parseHandles(body.handles);
   const business = body.business === undefined || body.business === null || body.business === "" ? "" : requiredBounded(body.business, "Legal name", 200);
   const area = body.area === undefined || body.area === null || body.area === "" ? "" : requiredBounded(body.area, "Area", 60);
+  const service =
+    body.service === undefined || body.service === null || body.service === ""
+      ? ""
+      : requiredBounded(body.service, "Type of business", 60);
   const googleMaps = body.googleMaps === undefined || body.googleMaps === null ? "" : checkGoogleMaps(body.googleMaps);
   const testMode =
     body.testMode === undefined && body.test_mode === undefined
@@ -1037,7 +1047,7 @@ function parseRunInput(rawBody: string | undefined, config: PresenceConfig): Par
   if (!website && !googleMaps && !handles.instagram && !handles.tiktok && !handles.facebook) {
     throw new PresenceError(422, "Add a website, a Google Maps link, or a social handle.");
   }
-  return { company, website, handles, business, area, googleMaps, businessId, testMode, compareToRunId };
+  return { company, website, handles, business, area, service, googleMaps, businessId, testMode, compareToRunId };
 }
 
 function requestFromRun(run: PresenceRun): ParsedRun {
@@ -1047,6 +1057,7 @@ function requestFromRun(run: PresenceRun): ParsedRun {
     handles: run.handles,
     business: run.business,
     area: run.area,
+    service: run.service,
     googleMaps: run.googleMaps,
     businessId: run.businessId,
     testMode: run.testMode,
@@ -1200,6 +1211,14 @@ function googleMapsHostAllowed(host: string, pathname: string) {
   if (host === "goo.gl") return pathname.startsWith("/maps");
   if (GOOGLE_MAPS_HOST.test(host)) return pathname.startsWith("/maps");
   return false;
+}
+
+/** Area and type of business share one competitors object. A blank value is omitted, not written as an empty string. */
+function competitorsOption(run: PresenceRun): { competitors: { area?: string; service?: string } } | Record<string, never> {
+  const competitors: { area?: string; service?: string } = {};
+  if (run.area) competitors.area = run.area;
+  if (run.service) competitors.service = run.service;
+  return Object.keys(competitors).length > 0 ? { competitors } : {};
 }
 
 function googleMapsOption(options: Record<string, unknown>) {

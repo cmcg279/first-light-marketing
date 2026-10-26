@@ -43,6 +43,7 @@ export type NewReportDraft = {
   facebook: string;
   legalName: string;
   area: string;
+  service: string;
   googleMaps: string;
   testMode: boolean;
 };
@@ -56,6 +57,7 @@ export function blankNewReportDraft(defaultTestMode: boolean): NewReportDraft {
     facebook: "",
     legalName: "",
     area: "",
+    service: "",
     googleMaps: "",
     testMode: defaultTestMode,
   };
@@ -75,8 +77,10 @@ export function newReportDraftAfterCreate(
 }
 
 /** Plain pre-submit line. Whitespace counts as empty, matching the value that is sent. */
-export function newReportWillUseLine(website: string, googleMaps: string): string {
+export function newReportWillUseLine(website: string, googleMaps: string, service = ""): string {
   const site = website.trim() || "No website";
   const maps = googleMaps.trim() || "No Maps link";
-  return `Website: ${site}. Maps: ${maps}.`;
+  const type = service.trim();
+  const base = `Website: ${site}. Maps: ${maps}.`;
+  return type ? `${base} Type of business: ${type}.` : base;
 }

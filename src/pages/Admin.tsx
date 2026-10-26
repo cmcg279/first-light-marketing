@@ -1489,6 +1489,7 @@ function PresenceAudits({
   const [facebookError, setFacebookError] = useState("");
   const [legalName, setLegalName] = useState("");
   const [area, setArea] = useState("");
+  const [service, setService] = useState("");
   const [googleMaps, setGoogleMaps] = useState("");
   const [testMode, setTestMode] = useState(spend.defaultTestMode);
   const [testModeTouched, setTestModeTouched] = useState(false);
@@ -1518,6 +1519,7 @@ function PresenceAudits({
     setFacebook(draft.facebook);
     setLegalName(draft.legalName);
     setArea(draft.area);
+    setService(draft.service);
     setGoogleMaps(draft.googleMaps);
     setTestMode(draft.testMode);
     setTestModeTouched(false);
@@ -1541,6 +1543,7 @@ function PresenceAudits({
       facebook,
       legalName,
       area,
+      service,
       googleMaps,
       testMode,
     };
@@ -1550,6 +1553,7 @@ function PresenceAudits({
       ...(Object.keys(handles).length > 0 ? { handles } : {}),
       ...(legalName.trim() ? { business: legalName.trim() } : {}),
       ...(area.trim() ? { area: area.trim() } : {}),
+      ...(service.trim() ? { service: service.trim() } : {}),
       ...(googleMaps.trim() ? { googleMaps: googleMaps.trim() } : {}),
       testMode,
     })
@@ -1591,6 +1595,14 @@ function PresenceAudits({
             />
             <TextField label="Legal name (optional)" value={legalName} autoComplete="off" onChange={setLegalName} />
             <TextField label="Area (optional)" value={area} autoComplete="off" onChange={setArea} />
+            <TextField
+              label="Type of business (optional)"
+              value={service}
+              autoComplete="off"
+              maxLength={60}
+              placeholder="e.g. gelato shop"
+              onChange={setService}
+            />
             <TextField
               label="Google Maps link, place ID (starts ChIJ) or CID (optional)"
               value={googleMaps}
@@ -1644,7 +1656,7 @@ function PresenceAudits({
             {saving ? "Starting..." : testMode ? "Start free test" : "Start real report"}
           </button>
           <p className="mt-4 break-words font-sans text-xs leading-relaxed text-body/70">
-            {newReportWillUseLine(website, googleMaps)}
+            {newReportWillUseLine(website, googleMaps, service)}
           </p>
         </form>
 
@@ -2151,6 +2163,8 @@ function TextField({
   type = "text",
   min,
   max,
+  maxLength,
+  placeholder,
   hint,
   error,
   autoComplete,
@@ -2161,6 +2175,8 @@ function TextField({
   type?: "text" | "number" | "password";
   min?: number;
   max?: number;
+  maxLength?: number;
+  placeholder?: string;
   hint?: string;
   error?: string;
   autoComplete?: string;
@@ -2173,6 +2189,8 @@ function TextField({
         type={type}
         min={min}
         max={max}
+        maxLength={maxLength}
+        placeholder={placeholder}
         value={value}
         autoComplete={autoComplete}
         onChange={(event) => onChange(event.target.value)}
