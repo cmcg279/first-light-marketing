@@ -1049,16 +1049,18 @@ function parseHandles(value: unknown): PresenceHandles {
 
 function readFacebookHandle(value: unknown): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
-  if (typeof value !== "string" || !value.trim() || value.length > 200) {
+  if (typeof value !== "string" || value.length > 200) {
     fail("handles.facebook must be a Facebook Page name or address");
   }
+  if (FACEBOOK_INVISIBLE.test(value)) fail(FACEBOOK_WHITESPACE);
   const handle = value.trim();
-  if (FACEBOOK_DISALLOWED.test(value) || FACEBOOK_DISALLOWED.test(handle)) fail(FACEBOOK_WHITESPACE);
+  if (!handle) fail("handles.facebook must be a Facebook Page name or address");
+  if (/\s/.test(handle)) fail(FACEBOOK_WHITESPACE);
   return handle;
 }
 
-/** Spaces and zero-width characters. Keep in sync with FACEBOOK_DISALLOWED in src/lib/presenceReport.ts. */
-const FACEBOOK_DISALLOWED = /[\s\u200b-\u200d\u2060\u180e\ufeff]/;
+/** Invisible characters. Keep in sync with FACEBOOK_INVISIBLE in src/lib/presenceReport.ts. */
+const FACEBOOK_INVISIBLE = /[\u200b-\u200d\u2060\u180e\ufeff]/;
 
 function spendReservation(projected: Projection, capCents: number): SpendReservation | null {
   if (projected.costDeltaCents === 0) return null;

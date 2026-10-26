@@ -129,10 +129,13 @@ describe("worker contract", () => {
     assert.throws(() => validateJob({ ...base, handles: { tiktok: "a" } }), /TikTok/);
     assert.throws(() => validateJob({ ...base, handles: { youtube: "harbour" } }), /youtube/);
     assert.throws(() => validateJob({ ...base, handles: { x: "harbour" } }), /unknown field/);
-    for (const facebook of ["Harbour Cafe", "https://www.facebook.com/VP Jebb", "VP\u200bJebb", "\ufeffVPJebb"]) {
+    for (const facebook of ["Harbour Cafe", "https://www.facebook.com/VP Jebb", "VP\u200bJebb", "\ufeffVPJebb", "VPJebb\ufeff"]) {
       assert.throws(() => validateJob({ ...base, handles: { facebook } }), /no spaces/);
       assert.throws(() => validateJob({ ...base, handles: { facebook } }), /facebook\.com\/VPJebb/);
     }
+    assert.equal(validateJob({ ...base, handles: { facebook: "VPJebb " } }).handles.facebook, "VPJebb");
+    assert.equal(validateJob({ ...base, handles: { facebook: "VPJebb\n" } }).handles.facebook, "VPJebb");
+    assert.equal(validateJob({ ...base, handles: { facebook: "\tVPJebb" } }).handles.facebook, "VPJebb");
     assert.equal(validateJob({ ...base, handles: { facebook: "VPJebb" } }).handles.facebook, "VPJebb");
     assert.equal(
       validateJob({ ...base, handles: { facebook: "https://www.facebook.com/VPJebb" } }).handles.facebook,
@@ -298,6 +301,7 @@ describe("presence audit API", () => {
       [{ ...validBody(), handles: { facebook: "https://www.facebook.com/VP Jebb" } }, /facebook\.com\/VPJebb/],
       [{ ...validBody(), handles: { facebook: "VP\u200bJebb" } }, /no spaces/],
       [{ ...validBody(), handles: { facebook: "\ufeffVPJebb" } }, /facebook\.com\/VPJebb/],
+      [{ ...validBody(), handles: { facebook: "VPJebb\ufeff" } }, /no spaces/],
       [{ ...validBody(), testMode: "true" }, /true or false/],
       ["{", /Invalid JSON/],
     ];
@@ -314,6 +318,26 @@ describe("presence audit API", () => {
       });
       assert.equal(response.statusCode, body === "{" ? 400 : 422);
       assert.match((response.body as { error: string }).error, message);
+      assert.equal(store.inserts, 0);
+    }
+  });
+
+  it("trims surrounding Facebook whitespace and stores the trimmed value", async () => {
+    const padded = ["VPJebb ", "VPJebb\n", "\tVPJebb"] as const;
+    for (const facebook of padded) {
+      const store = memoryStore();
+      const response = await postRun(store, { ...validBody(), handles: { facebook } }, testConfig());
+      assert.equal(response.statusCode, 200);
+      const shown = (response.body as { run: { handles: { facebook: string } } }).run.handles.facebook;
+      assert.equal(shown, "VPJebb");
+      const saved = (await store.listRuns())[0];
+      assert.equal(saved?.handles.facebook, "VPJebb");
+    }
+    for (const facebook of ["Harbour Cafe", "https://www.facebook.com/VP Jebb", "\ufeffVPJebb", "VPJebb\ufeff"]) {
+      const store = memoryStore();
+      const response = await postRun(store, { ...validBody(), handles: { facebook } }, testConfig());
+      assert.equal(response.statusCode, 422);
+      assert.match((response.body as { error: string }).error, /no spaces/);
       assert.equal(store.inserts, 0);
     }
   });

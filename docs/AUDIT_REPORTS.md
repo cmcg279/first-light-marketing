@@ -19,7 +19,7 @@ Top-level keys only: `schema`, `run_id`, `business_id`, `requested_by`, `kind`, 
 | `kind` | `admin` |
 | `company` | Required, at most 120 characters |
 | `website` | Required `https://` URL. No credentials, no IP address, no `localhost`, no host without a dot, no `.local` / `.internal` / `.localhost`, port empty or 443, length at most 300 |
-| `handles` | Optional `instagram`, `tiktok`, and `facebook` only. LinkedIn, YouTube, and X are rejected. Facebook is a page URL such as `https://www.facebook.com/VPJebb`, or the name from that URL. A Facebook value that contains spaces is rejected by the Reports form before submit, and the API returns 422 with the same message |
+| `handles` | Optional `instagram`, `tiktok`, and `facebook` only. LinkedIn, YouTube, and X are rejected. Facebook is a page URL such as `https://www.facebook.com/VPJebb`, or the name from that URL. Surrounding spaces, tabs, and newlines are trimmed. A space that remains, or an invisible character (U+200B–U+200D, U+2060, U+180E, U+FEFF), is rejected by the Reports form before submit, and the API returns 422 with the same message |
 | `brand` | `first_light`. `BRAND_IDS` in `api/presence-audit.ts` (`first_light`, `example_brand`) must stay the same as the `brands:` entries in the worker's `social_audit/brands.yaml` |
 | `options` | Optional legal name (`business`, ≤200), area (`competitors.area`, ≤60), and on retry `compare_to_run_id` of the previous run |
 | `test_mode` | The free-test checkbox |

@@ -27,6 +27,10 @@ describe("facebook field", () => {
     assert.equal(facebookFieldError("   "), null);
     assert.equal(facebookFieldError("https://www.facebook.com/VPJebb"), null);
     assert.equal(facebookFieldError("VPJebb"), null);
+    assert.equal(facebookFieldError("VPJebb "), null);
+    assert.equal(facebookFieldError("VPJebb\n"), null);
+    assert.equal(facebookFieldError("\tVPJebb"), null);
+    assert.equal(facebookFieldError("\t https://www.facebook.com/VPJebb \n"), null);
     const spaced = facebookFieldError("Harbour Cafe");
     assert.match(spaced || "", /no spaces/);
     assert.match(spaced || "", /facebook\.com\/VPJebb/);
