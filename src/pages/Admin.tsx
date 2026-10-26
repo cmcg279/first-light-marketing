@@ -29,7 +29,14 @@ import {
   uploadMediaAsset,
 } from "../lib/adminApi";
 import { Seo } from "../components/Seo";
-import { FACEBOOK_FIELD_HINT, facebookFieldError, presenceRunCostText } from "../lib/presenceReport";
+import {
+  FACEBOOK_FIELD_HINT,
+  facebookFieldError,
+  newReportDraftAfterCreate,
+  newReportWillUseLine,
+  presenceRunCostText,
+  type NewReportDraft,
+} from "../lib/presenceReport";
 import type {
   AdminLead,
   AuditReport,
@@ -519,8 +526,10 @@ export default function Admin() {
       setPresenceRuns((current) => [result.run, ...current.filter((run) => run.id !== result.run.id)]);
       setPresenceSpend(result.spend);
       setStatus(result.run.testMode ? "Free test run queued." : "Real report queued.");
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start the report.");
+      return false;
     } finally {
       setSaving(false);
     }
@@ -1466,7 +1475,7 @@ function PresenceAudits({
   spend: PresenceSpendSummary;
   saving: boolean;
   submitError: string;
-  onCreate: (input: PresenceRunInput) => Promise<void>;
+  onCreate: (input: PresenceRunInput) => Promise<boolean>;
   onCancel: (run: PresenceRun) => Promise<void>;
   onRetry: (run: PresenceRun) => Promise<void>;
   onDownload: (run: PresenceRun) => Promise<void>;
@@ -1480,6 +1489,7 @@ function PresenceAudits({
   const [facebookError, setFacebookError] = useState("");
   const [legalName, setLegalName] = useState("");
   const [area, setArea] = useState("");
+  const [service, setService] = useState("");
   const [googleMaps, setGoogleMaps] = useState("");
   const [testMode, setTestMode] = useState(spend.defaultTestMode);
   const [testModeTouched, setTestModeTouched] = useState(false);
@@ -1501,6 +1511,21 @@ function PresenceAudits({
   const hasAnchor = Boolean(website.trim() || googleMaps.trim() || instagram.trim() || tiktok.trim() || facebook.trim());
   const canSubmit = Boolean(company.trim() && hasAnchor && spend.workerConfigured) && !saving;
 
+  function applyNewReportDraft(draft: NewReportDraft) {
+    setCompany(draft.company);
+    setWebsite(draft.website);
+    setInstagram(draft.instagram);
+    setTiktok(draft.tiktok);
+    setFacebook(draft.facebook);
+    setLegalName(draft.legalName);
+    setArea(draft.area);
+    setService(draft.service);
+    setGoogleMaps(draft.googleMaps);
+    setTestMode(draft.testMode);
+    setTestModeTouched(false);
+    setFacebookError("");
+  }
+
   function submit(event: FormEvent) {
     event.preventDefault();
     const nextFacebookError = facebookFieldError(facebook);
@@ -1510,21 +1535,39 @@ function PresenceAudits({
     if (instagram.trim()) handles.instagram = instagram.trim();
     if (tiktok.trim()) handles.tiktok = tiktok.trim();
     if (facebook.trim()) handles.facebook = facebook.trim();
+    const draft: NewReportDraft = {
+      company,
+      website,
+      instagram,
+      tiktok,
+      facebook,
+      legalName,
+      area,
+      service,
+      googleMaps,
+      testMode,
+    };
     onCreate({
       company,
       ...(website.trim() ? { website: website.trim() } : {}),
       ...(Object.keys(handles).length > 0 ? { handles } : {}),
       ...(legalName.trim() ? { business: legalName.trim() } : {}),
       ...(area.trim() ? { area: area.trim() } : {}),
+      ...(service.trim() ? { service: service.trim() } : {}),
       ...(googleMaps.trim() ? { googleMaps: googleMaps.trim() } : {}),
       testMode,
-    }).catch(() => undefined);
+    })
+      .then((created) => {
+        const next = newReportDraftAfterCreate(draft, created, spend.defaultTestMode);
+        if (next !== draft) applyNewReportDraft(next);
+      })
+      .catch(() => undefined);
   }
 
   return (
     <div className="mt-8">
       <div className="grid gap-8 lg:grid-cols-[380px_minmax(0,1fr)]">
-        <form onSubmit={submit} className="rounded-lg border border-body/10 bg-cream p-6">
+        <form onSubmit={submit} autoComplete="off" className="rounded-lg border border-body/10 bg-cream p-6">
           <h2 className="font-serif text-2xl font-bold text-body">New report</h2>
           <p className="mt-2 font-sans text-sm leading-relaxed text-body/60">
             Company is required. Website is optional. With no website, add a Google Maps link or a social handle. A PDF can be downloaded when the report succeeds or needs review. Check a needs-review PDF before sending it to a client.
@@ -1535,13 +1578,14 @@ function PresenceAudits({
             </p>
           )}
           <div className="mt-7 grid gap-5">
-            <TextField label="Company" value={company} onChange={setCompany} />
-            <TextField label="Website (optional)" value={website} onChange={setWebsite} />
-            <TextField label="Instagram" value={instagram} onChange={setInstagram} />
-            <TextField label="TikTok" value={tiktok} onChange={setTiktok} />
+            <TextField label="Company" value={company} autoComplete="off" onChange={setCompany} />
+            <TextField label="Website (optional)" value={website} autoComplete="off" onChange={setWebsite} />
+            <TextField label="Instagram" value={instagram} autoComplete="off" onChange={setInstagram} />
+            <TextField label="TikTok" value={tiktok} autoComplete="off" onChange={setTiktok} />
             <TextField
               label="Facebook"
               value={facebook}
+              autoComplete="off"
               hint={FACEBOOK_FIELD_HINT}
               error={facebookError}
               onChange={(value) => {
@@ -1549,11 +1593,20 @@ function PresenceAudits({
                 if (facebookError) setFacebookError(facebookFieldError(value) || "");
               }}
             />
-            <TextField label="Legal name (optional)" value={legalName} onChange={setLegalName} />
-            <TextField label="Area (optional)" value={area} onChange={setArea} />
+            <TextField label="Legal name (optional)" value={legalName} autoComplete="off" onChange={setLegalName} />
+            <TextField label="Area (optional)" value={area} autoComplete="off" onChange={setArea} />
+            <TextField
+              label="Type of business (optional)"
+              value={service}
+              autoComplete="off"
+              maxLength={60}
+              placeholder="e.g. gelato shop"
+              onChange={setService}
+            />
             <TextField
               label="Google Maps link, place ID (starts ChIJ) or CID (optional)"
               value={googleMaps}
+              autoComplete="off"
               hint="Helps match the right Google listing, especially for businesses with no website. Use a Maps link, a place ID (starts ChIJ) or CID."
               onChange={setGoogleMaps}
             />
@@ -1602,6 +1655,9 @@ function PresenceAudits({
           >
             {saving ? "Starting..." : testMode ? "Start free test" : "Start real report"}
           </button>
+          <p className="mt-4 break-words font-sans text-xs leading-relaxed text-body/70">
+            {newReportWillUseLine(website, googleMaps, service)}
+          </p>
         </form>
 
         <div className="overflow-hidden rounded-lg border border-body/10 bg-white">
@@ -2107,8 +2163,11 @@ function TextField({
   type = "text",
   min,
   max,
+  maxLength,
+  placeholder,
   hint,
   error,
+  autoComplete,
   onChange,
 }: {
   label: string;
@@ -2116,8 +2175,11 @@ function TextField({
   type?: "text" | "number" | "password";
   min?: number;
   max?: number;
+  maxLength?: number;
+  placeholder?: string;
   hint?: string;
   error?: string;
+  autoComplete?: string;
   onChange: (value: string) => void;
 }) {
   return (
@@ -2127,7 +2189,10 @@ function TextField({
         type={type}
         min={min}
         max={max}
+        maxLength={maxLength}
+        placeholder={placeholder}
         value={value}
+        autoComplete={autoComplete}
         onChange={(event) => onChange(event.target.value)}
         aria-invalid={error ? true : undefined}
         className={`mt-2 block w-full rounded-lg border bg-white px-4 py-3 font-sans text-base text-body focus:outline-none focus:ring-2 ${

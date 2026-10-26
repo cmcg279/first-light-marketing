@@ -173,6 +173,7 @@ export interface PresenceRun {
   handles: PresenceHandles;
   business: string;
   area: string;
+  service: string;
   googleMaps: string;
   testMode: boolean;
   status: PresenceRunStatus;
@@ -214,6 +215,7 @@ export interface PresenceRunInput {
   };
   business?: string;
   area?: string;
+  service?: string;
   googleMaps?: string;
   testMode: boolean;
 }

@@ -33,3 +33,54 @@ export function presenceRunCostText(run: Pick<PresenceRun, "status" | "costUsd">
   if (typeof run.costUsd === "number" && Number.isFinite(run.costUsd)) return usd.format(run.costUsd);
   return "—";
 }
+
+/** Fields of the New report form. Retry does not use this draft. */
+export type NewReportDraft = {
+  company: string;
+  website: string;
+  instagram: string;
+  tiktok: string;
+  facebook: string;
+  legalName: string;
+  area: string;
+  service: string;
+  googleMaps: string;
+  testMode: boolean;
+};
+
+export function blankNewReportDraft(defaultTestMode: boolean): NewReportDraft {
+  return {
+    company: "",
+    website: "",
+    instagram: "",
+    tiktok: "",
+    facebook: "",
+    legalName: "",
+    area: "",
+    service: "",
+    googleMaps: "",
+    testMode: defaultTestMode,
+  };
+}
+
+/**
+ * A successful create returns the blank form, with the free-test checkbox at the
+ * configured default. A failed create returns the same draft so the user can fix it.
+ */
+export function newReportDraftAfterCreate(
+  draft: NewReportDraft,
+  created: boolean,
+  defaultTestMode: boolean,
+): NewReportDraft {
+  if (!created) return draft;
+  return blankNewReportDraft(defaultTestMode);
+}
+
+/** Plain pre-submit line. Whitespace counts as empty, matching the value that is sent. */
+export function newReportWillUseLine(website: string, googleMaps: string, service = ""): string {
+  const site = website.trim() || "No website";
+  const maps = googleMaps.trim() || "No Maps link";
+  const type = service.trim();
+  const base = `Website: ${site}. Maps: ${maps}.`;
+  return type ? `${base} Type of business: ${type}.` : base;
+}

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { facebookFieldError, presenceRunCostText } from "../src/lib/presenceReport.ts";
+import {
+  blankNewReportDraft,
+  facebookFieldError,
+  newReportDraftAfterCreate,
+  newReportWillUseLine,
+  presenceRunCostText,
+  type NewReportDraft,
+} from "../src/lib/presenceReport.ts";
 
 describe("reports cost column", () => {
   it("shows an em dash while a run is queued or running, even when an estimate is held", () => {
@@ -18,6 +25,56 @@ describe("reports cost column", () => {
     assert.equal(presenceRunCostText({ status: "failed" }), "—");
     assert.equal(presenceRunCostText({ status: "cancelled" }), "—");
     assert.equal(presenceRunCostText({ status: "succeeded" }), "—");
+  });
+});
+
+describe("new report form", () => {
+  const filled: NewReportDraft = {
+    company: "Genoa Cafe",
+    website: "https://genoa-cafe.square.site",
+    instagram: "genoacafe",
+    tiktok: "genoacafe",
+    facebook: "GenoaCafe",
+    legalName: "Genoa Cafe Ltd",
+    area: "Cork",
+    service: "gelato shop",
+    googleMaps: "https://www.google.com/maps/place/Genoa",
+    testMode: false,
+  };
+
+  it("clears every field after a successful create and keeps them when create fails", () => {
+    assert.deepEqual(newReportDraftAfterCreate(filled, false, true), filled);
+    const cleared = newReportDraftAfterCreate(filled, true, true);
+    assert.deepEqual(cleared, blankNewReportDraft(true));
+    assert.equal(cleared.company, "");
+    assert.equal(cleared.website, "");
+    assert.equal(cleared.googleMaps, "");
+    assert.equal(cleared.area, "");
+    assert.equal(cleared.service, "");
+    assert.equal(cleared.instagram, "");
+    assert.equal(cleared.tiktok, "");
+    assert.equal(cleared.facebook, "");
+    assert.equal(cleared.legalName, "");
+    assert.equal(cleared.testMode, true);
+    assert.equal(blankNewReportDraft(false).testMode, false);
+    assert.equal(newReportDraftAfterCreate(filled, true, false).testMode, false);
+  });
+
+  it("states the website and Maps value the run will use", () => {
+    assert.equal(
+      newReportWillUseLine("  https://genoa-cafe.square.site  ", "   "),
+      "Website: https://genoa-cafe.square.site. Maps: No Maps link.",
+    );
+    assert.equal(
+      newReportWillUseLine("", "ChIJN1t_tDeuEmsRUsoyG83frY4"),
+      "Website: No website. Maps: ChIJN1t_tDeuEmsRUsoyG83frY4.",
+    );
+    assert.equal(newReportWillUseLine(" \n ", "\t"), "Website: No website. Maps: No Maps link.");
+    assert.equal(
+      newReportWillUseLine("https://genoa-cafe.square.site", "", "  gelato shop  "),
+      "Website: https://genoa-cafe.square.site. Maps: No Maps link. Type of business: gelato shop.",
+    );
+    assert.equal(newReportWillUseLine("", "https://maps.google.com/?cid=1", "   "), "Website: No website. Maps: https://maps.google.com/?cid=1.");
   });
 });
 
