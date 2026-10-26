@@ -1,8 +1,10 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  cancelPresenceRun,
   completeAdminLogin,
   clearAdminToken,
   createAuditReport,
+  createPresenceRun,
   deleteBlogPost,
   deleteAuditReport,
   deleteLead,
@@ -14,7 +16,10 @@ import {
   getAdminToken,
   getMediaAssets,
   getManagedContent,
+  getPresenceDownloadUrl,
+  getPresenceRuns,
   logoutAdmin,
+  retryPresenceRun,
   saveBlogPost,
   saveAuditSettings,
   saveManagedContent,
@@ -24,6 +29,7 @@ import {
   uploadMediaAsset,
 } from "../lib/adminApi";
 import { Seo } from "../components/Seo";
+import { FACEBOOK_FIELD_HINT, facebookFieldError, presenceRunCostText } from "../lib/presenceReport";
 import type {
   AdminLead,
   AuditReport,
@@ -31,7 +37,13 @@ import type {
   BlogPost,
   ManagedSiteContent,
   MediaAsset,
+  PresenceRun,
+  PresenceRunInput,
+  PresenceSpendSummary,
 } from "../types/admin";
+
+/** Previous Instagram report library. Reports shows presence audits while this is false. */
+const SHOW_LEGACY_AUDIT_REPORTS = false;
 
 const emptyContent: ManagedSiteContent = {
   home: {
@@ -184,6 +196,8 @@ export default function Admin() {
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [auditSettings, setAuditSettings] = useState<AuditSettings>(defaultAuditSettings);
   const [auditReports, setAuditReports] = useState<AuditReport[]>([]);
+  const [presenceRuns, setPresenceRuns] = useState<PresenceRun[]>([]);
+  const [presenceSpend, setPresenceSpend] = useState<PresenceSpendSummary | null>(null);
   const [editingPost, setEditingPost] = useState<BlogPost>(emptyPost);
   const [content, setContent] = useState<ManagedSiteContent>(emptyContent);
   const [loading, setLoading] = useState(false);
@@ -200,26 +214,51 @@ export default function Admin() {
     setLoading(true);
     setError("");
 
-    Promise.all([getAdminLeads(), getManagedContent(), getMediaAssets(), getAuditSettings(), getAuditReports()])
-      .then(([nextLeads, nextContent, nextMediaAssets, nextAuditSettings, nextAuditReports]) => {
+    const noteLoadError = (err: unknown) => {
+      if (cancelled) return;
+      setError(err instanceof Error ? err.message : "Could not load admin data.");
+      if (err instanceof Error && err.message.toLowerCase().includes("log in")) {
+        clearAdminToken();
+        setToken("");
+      }
+    };
+
+    const main = Promise.all([getAdminLeads(), getManagedContent(), getMediaAssets()])
+      .then(([nextLeads, nextContent, nextMediaAssets]) => {
         if (cancelled) return;
         setLeads(nextLeads);
         setContent(nextContent);
         setMediaAssets(nextMediaAssets);
-        setAuditSettings(nextAuditSettings);
-        setAuditReports(nextAuditReports);
       })
-      .catch((err) => {
+      .catch(noteLoadError);
+
+    const settings = getAuditSettings()
+      .then((nextAuditSettings) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Could not load admin data.");
-        if (err instanceof Error && err.message.toLowerCase().includes("log in")) {
-          clearAdminToken();
-          setToken("");
-        }
+        setAuditSettings(nextAuditSettings);
       })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      .catch(noteLoadError);
+
+    const presence = getPresenceRuns()
+      .then((nextPresence) => {
+        if (cancelled) return;
+        setPresenceRuns(nextPresence.runs);
+        setPresenceSpend(nextPresence.spend);
+      })
+      .catch(noteLoadError);
+
+    const legacy = SHOW_LEGACY_AUDIT_REPORTS
+      ? getAuditReports()
+          .then((nextAuditReports) => {
+            if (cancelled) return;
+            setAuditReports(nextAuditReports);
+          })
+          .catch(noteLoadError)
+      : Promise.resolve();
+
+    void Promise.all([main, settings, presence, legacy]).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
 
     return () => {
       cancelled = true;
@@ -463,6 +502,81 @@ export default function Admin() {
     }
   }
 
+  const refreshPresenceRuns = useCallback(async () => {
+    const result = await getPresenceRuns();
+    setPresenceRuns(result.runs);
+    setPresenceSpend(result.spend);
+    return result;
+  }, []);
+
+  async function handleCreatePresenceRun(input: PresenceRunInput) {
+    setSaving(true);
+    setStatus("");
+    setError("");
+
+    try {
+      const result = await createPresenceRun(input);
+      setPresenceRuns((current) => [result.run, ...current.filter((run) => run.id !== result.run.id)]);
+      setPresenceSpend(result.spend);
+      setStatus(result.run.testMode ? "Free test run queued." : "Real report queued.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start the report.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleCancelPresenceRun(run: PresenceRun) {
+    const confirmed = window.confirm(
+      `Stop tracking the report for ${run.company}? The worker has no cancel, so a run that has already started may still finish and the spend may already be committed. Any held reservation is released. Another report cannot start until this one finishes or 16 minutes have passed.`,
+    );
+    if (!confirmed) return;
+
+    setSaving(true);
+    setStatus("");
+    setError("");
+
+    try {
+      const result = await cancelPresenceRun(run.id);
+      setPresenceRuns((current) => current.map((item) => (item.id === result.run.id ? result.run : item)));
+      setPresenceSpend(result.spend);
+      setStatus("Tracking stopped. Any held reservation was released. Spend that is already committed is not undone. Another report waits until this run finishes or 16 minutes have passed.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not stop tracking the report.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRetryPresenceRun(run: PresenceRun) {
+    setSaving(true);
+    setStatus("");
+    setError("");
+
+    try {
+      const result = await retryPresenceRun(run.id);
+      setPresenceRuns((current) => [result.run, ...current.filter((item) => item.id !== result.run.id)]);
+      setPresenceSpend(result.spend);
+      setStatus(result.run.testMode ? "A new free test run was queued." : "A new report was queued.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not retry the report.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDownloadPresenceRun(run: PresenceRun) {
+    setStatus("");
+    setError("");
+
+    try {
+      const downloadUrl = await getPresenceDownloadUrl(run.id);
+      window.location.assign(downloadUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not download the report.");
+    }
+  }
+
   async function handleToggleResponded(lead: AdminLead) {
     setLeadActionId(lead.id);
     setStatus("");
@@ -511,7 +625,7 @@ export default function Admin() {
           </p>
           <h1 className="mt-3 font-serif text-3xl font-bold text-body">Sign in</h1>
           <p className="mt-3 font-sans text-sm leading-relaxed text-body/60">
-            View enquiries and manage blog settings.
+            View enquiries, run reports and manage the site.
           </p>
 
           <div className="mt-8 space-y-5">
@@ -548,7 +662,7 @@ export default function Admin() {
             </p>
             <h1 className="mt-3 font-serif text-4xl font-bold text-body">Admin portal</h1>
             <p className="mt-3 max-w-2xl font-sans text-base leading-relaxed text-body/60">
-              Review form submissions, manage the homepage announcement, update blog settings and upload media.
+              Review form submissions, run reports, manage the homepage announcement, update blog settings and upload media.
             </p>
           </div>
           <button
@@ -566,7 +680,7 @@ export default function Admin() {
           <MetricCard label="Latest enquiry" value={latestLead ? formatDate(latestLead.createdAt) : "None yet"} />
         </div>
 
-        <div className="mt-8 flex gap-2 border-b border-body/10">
+        <div className="mt-8 flex flex-wrap gap-2 border-b border-body/10">
           <TabButton active={activeTab === "leads"} onClick={() => setActiveTab("leads")}>
             Submissions
           </TabButton>
@@ -612,7 +726,20 @@ export default function Admin() {
             onSubmit={handleSaveContent}
           />
         )}
-        {activeTab === "reports" && (
+        {activeTab === "reports" && presenceSpend && !SHOW_LEGACY_AUDIT_REPORTS && (
+          <PresenceAudits
+            runs={presenceRuns}
+            spend={presenceSpend}
+            saving={saving}
+            submitError={error}
+            onCreate={handleCreatePresenceRun}
+            onCancel={handleCancelPresenceRun}
+            onRetry={handleRetryPresenceRun}
+            onDownload={handleDownloadPresenceRun}
+            onRefresh={refreshPresenceRuns}
+          />
+        )}
+        {activeTab === "reports" && SHOW_LEGACY_AUDIT_REPORTS && (
           <AuditReportsManager
             settings={auditSettings}
             reports={auditReports}
@@ -1324,6 +1451,273 @@ function AuditReportsManager({
   );
 }
 
+function PresenceAudits({
+  runs,
+  spend,
+  saving,
+  submitError,
+  onCreate,
+  onCancel,
+  onRetry,
+  onDownload,
+  onRefresh,
+}: {
+  runs: PresenceRun[];
+  spend: PresenceSpendSummary;
+  saving: boolean;
+  submitError: string;
+  onCreate: (input: PresenceRunInput) => Promise<void>;
+  onCancel: (run: PresenceRun) => Promise<void>;
+  onRetry: (run: PresenceRun) => Promise<void>;
+  onDownload: (run: PresenceRun) => Promise<void>;
+  onRefresh: () => Promise<unknown>;
+}) {
+  const [company, setCompany] = useState("");
+  const [website, setWebsite] = useState("");
+  const [instagram, setInstagram] = useState("");
+  const [tiktok, setTiktok] = useState("");
+  const [facebook, setFacebook] = useState("");
+  const [facebookError, setFacebookError] = useState("");
+  const [legalName, setLegalName] = useState("");
+  const [area, setArea] = useState("");
+  const [testMode, setTestMode] = useState(spend.defaultTestMode);
+  const [testModeTouched, setTestModeTouched] = useState(false);
+
+  useEffect(() => {
+    if (!testModeTouched) setTestMode(spend.defaultTestMode);
+  }, [spend.defaultTestMode, testModeTouched]);
+
+  useEffect(() => {
+    const shouldPoll = runs.some((run) => (run.status === "queued" || run.status === "running") && !run.trackingStopped);
+    if (!shouldPoll) return undefined;
+    const timer = window.setInterval(() => {
+      onRefresh().catch(() => undefined);
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [runs, onRefresh]);
+
+  const realBlocked = !spend.realRunsEnabled;
+  const canSubmit = Boolean(company.trim() && website.trim() && spend.workerConfigured) && !saving;
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const nextFacebookError = facebookFieldError(facebook);
+    setFacebookError(nextFacebookError || "");
+    if (nextFacebookError) return;
+    const handles: NonNullable<PresenceRunInput["handles"]> = {};
+    if (instagram.trim()) handles.instagram = instagram.trim();
+    if (tiktok.trim()) handles.tiktok = tiktok.trim();
+    if (facebook.trim()) handles.facebook = facebook.trim();
+    onCreate({
+      company,
+      website,
+      ...(Object.keys(handles).length > 0 ? { handles } : {}),
+      ...(legalName.trim() ? { business: legalName.trim() } : {}),
+      ...(area.trim() ? { area: area.trim() } : {}),
+      testMode,
+    }).catch(() => undefined);
+  }
+
+  return (
+    <div className="mt-8">
+      <div className="grid gap-8 lg:grid-cols-[380px_minmax(0,1fr)]">
+        <form onSubmit={submit} className="rounded-lg border border-body/10 bg-cream p-6">
+          <h2 className="font-serif text-2xl font-bold text-body">New report</h2>
+          <p className="mt-2 font-sans text-sm leading-relaxed text-body/60">
+            Company and an https website. Instagram, TikTok, and Facebook are optional. A PDF is ready to download only when the report succeeds.
+          </p>
+          {!spend.workerConfigured && (
+            <p className="mt-4 rounded-lg border border-body/10 bg-white px-3 py-2 font-sans text-sm leading-relaxed text-body/70">
+              The audit worker is not on this stack yet. Deploy with FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG before starting a run.
+            </p>
+          )}
+          <div className="mt-7 grid gap-5">
+            <TextField label="Company" value={company} onChange={setCompany} />
+            <TextField label="Website" value={website} onChange={setWebsite} />
+            <TextField label="Instagram" value={instagram} onChange={setInstagram} />
+            <TextField label="TikTok" value={tiktok} onChange={setTiktok} />
+            <TextField
+              label="Facebook"
+              value={facebook}
+              hint={FACEBOOK_FIELD_HINT}
+              error={facebookError}
+              onChange={(value) => {
+                setFacebook(value);
+                if (facebookError) setFacebookError(facebookFieldError(value) || "");
+              }}
+            />
+            <TextField label="Legal name (optional)" value={legalName} onChange={setLegalName} />
+            <TextField label="Area (optional)" value={area} onChange={setArea} />
+            <label className="rounded-lg border border-coral/25 bg-white px-4 py-3">
+              <span className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={testMode}
+                  onChange={(event) => {
+                    setTestModeTouched(true);
+                    setTestMode(event.target.checked);
+                  }}
+                  className="mt-1 h-5 w-5 rounded border-body/20 text-coral focus:ring-coral"
+                />
+                <span>
+                  <span className="block font-sans text-sm font-semibold text-body">Free test run</span>
+                  <span className="mt-1 block font-sans text-xs leading-relaxed text-body/60">
+                    On by default. The worker stays offline: sample data, no Apify, and no AI charge.
+                    {realBlocked
+                      ? " Real runs are switched off on this stack until FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true."
+                      : " Turn this off to start a real report."}
+                  </span>
+                </span>
+              </span>
+            </label>
+            {!testMode && realBlocked && (
+              <p className="rounded-lg border border-coral/20 bg-white px-3 py-2 font-sans text-xs leading-relaxed text-coral">
+                This stack will refuse the run. Leave the free test run on.
+              </p>
+            )}
+            {submitError === "A run is already in progress." && (
+              <p className="rounded-lg border border-coral/20 bg-white px-3 py-2 font-sans text-xs leading-relaxed text-coral" role="alert">
+                A run is already in progress.
+              </p>
+            )}
+          </div>
+          <button
+            type="submit"
+            disabled={!canSubmit || (!testMode && realBlocked)}
+            className="mt-7 rounded-full bg-coral px-6 py-3 font-sans text-sm font-semibold uppercase tracking-wider text-off-white transition hover:bg-coral-700 disabled:opacity-40"
+          >
+            {saving ? "Starting..." : testMode ? "Start free test" : "Start real report"}
+          </button>
+        </form>
+
+        <div className="overflow-hidden rounded-lg border border-body/10 bg-white">
+          <div className="flex flex-col gap-4 border-b border-body/10 p-6 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="font-serif text-2xl font-bold text-body">Reports</h2>
+              <p className="mt-2 font-sans text-sm text-body/60">
+                Status updates every few seconds while a run is queued or in progress. Cost appears when the run has finished.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                onRefresh().catch(() => undefined);
+              }}
+              className="self-start rounded-full border border-body/15 px-4 py-2 font-sans text-xs font-semibold uppercase tracking-[0.12em] text-body/60 transition hover:border-coral hover:text-coral"
+            >
+              Refresh
+            </button>
+          </div>
+          {runs.length === 0 ? (
+            <div className="p-8 text-center">
+              <p className="font-serif text-2xl font-semibold text-body">No reports yet</p>
+              <p className="mt-2 font-sans text-sm text-body/60">Start with a free test run.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left">
+                <thead>
+                  <tr className="border-b border-body/10 font-sans text-xs font-semibold uppercase tracking-[0.14em] text-body/45">
+                    <th className="px-6 py-3 font-semibold">Business</th>
+                    <th className="px-4 py-3 font-semibold">Status</th>
+                    <th className="px-4 py-3 font-semibold">Detail</th>
+                    <th className="px-4 py-3 font-semibold">Cost</th>
+                    <th className="px-4 py-3 font-semibold">Started</th>
+                    <th className="px-6 py-3 font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((run) => {
+                    const handleLine = [run.handles.instagram, run.handles.tiktok, run.handles.facebook].filter(Boolean).join(" · ");
+                    const open = (run.status === "queued" || run.status === "running") && !run.trackingStopped;
+                    const canRetry = run.status === "failed" || run.status === "cancelled" || run.status === "needs_review";
+                    return (
+                      <tr key={run.id} className="border-b border-body/10 align-top last:border-b-0">
+                        <td className="px-6 py-4">
+                          <p className="font-serif text-lg font-bold text-body">{run.company}</p>
+                          <a
+                            href={run.website}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-1 block max-w-[220px] truncate font-sans text-xs text-body/50 underline-offset-2 hover:text-coral hover:underline"
+                          >
+                            {run.website}
+                          </a>
+                          {handleLine && (
+                            <p className="mt-1 max-w-[220px] truncate font-sans text-xs text-body/45">{handleLine}</p>
+                          )}
+                        </td>
+                        <td className="px-4 py-4">
+                          <span
+                            className={`inline-flex rounded-full px-3 py-1 font-sans text-xs font-semibold uppercase tracking-[0.12em] ${presenceStatusClass(run)}`}
+                          >
+                            {run.statusLabel}
+                          </span>
+                          {run.testMode && (
+                            <p className="mt-2 font-sans text-xs text-body/45">Free test</p>
+                          )}
+                        </td>
+                        <td className="px-4 py-4">
+                          <p className="max-w-[220px] font-sans text-xs leading-relaxed text-body/55">{run.statusMessage}</p>
+                        </td>
+                        <td className="px-4 py-4">
+                          <p className="font-sans text-sm font-semibold text-body">{presenceRunCostText(run)}</p>
+                        </td>
+                        <td className="px-4 py-4 font-sans text-sm text-body/60">{formatDate(run.createdAt)}</td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => onDownload(run)}
+                              disabled={!run.downloadReady || saving}
+                              className="rounded-full border border-body/15 px-3 py-2 font-sans text-xs font-semibold uppercase tracking-[0.12em] text-body/60 transition hover:border-coral hover:text-coral disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Download
+                            </button>
+                            {open && (
+                              <button
+                                type="button"
+                                onClick={() => onCancel(run)}
+                                disabled={saving}
+                                className="rounded-full border border-coral/25 px-3 py-2 font-sans text-xs font-semibold uppercase tracking-[0.12em] text-coral transition hover:bg-coral hover:text-off-white disabled:opacity-40"
+                              >
+                                Stop tracking
+                              </button>
+                            )}
+                            {canRetry && (
+                              <button
+                                type="button"
+                                onClick={() => onRetry(run)}
+                                disabled={saving || !spend.workerConfigured}
+                                className="rounded-full border border-body/15 px-3 py-2 font-sans text-xs font-semibold uppercase tracking-[0.12em] text-body/60 transition hover:border-coral hover:text-coral disabled:opacity-40"
+                              >
+                                Retry
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function presenceStatusClass(run: PresenceRun) {
+  if (run.trackingStopped && (run.status === "queued" || run.status === "running")) return "bg-body/10 text-body/55";
+  if (run.status === "succeeded") return "bg-green-100 text-green-700";
+  if (run.status === "needs_review") return "bg-amber-100 text-amber-800";
+  if (run.status === "failed" || run.status === "cancelled") return "bg-coral/10 text-coral";
+  if (run.status === "running") return "bg-amber-100 text-amber-800";
+  return "bg-body/10 text-body/55";
+}
+
 function BlogEditor({
   content,
   posts,
@@ -1656,6 +2050,8 @@ function TextField({
   type = "text",
   min,
   max,
+  hint,
+  error,
   onChange,
 }: {
   label: string;
@@ -1663,6 +2059,8 @@ function TextField({
   type?: "text" | "number" | "password";
   min?: number;
   max?: number;
+  hint?: string;
+  error?: string;
   onChange: (value: string) => void;
 }) {
   return (
@@ -1674,8 +2072,19 @@ function TextField({
         max={max}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-2 block w-full rounded-lg border border-body/15 bg-white px-4 py-3 font-sans text-base text-body focus:border-coral focus:outline-none focus:ring-2 focus:ring-coral/20"
+        aria-invalid={error ? true : undefined}
+        className={`mt-2 block w-full rounded-lg border bg-white px-4 py-3 font-sans text-base text-body focus:outline-none focus:ring-2 ${
+          error
+            ? "border-coral focus:border-coral focus:ring-coral/20"
+            : "border-body/15 focus:border-coral focus:ring-coral/20"
+        }`}
       />
+      {hint && <p className="mt-2 font-sans text-xs leading-relaxed text-body/45">{hint}</p>}
+      {error && (
+        <p className="mt-2 font-sans text-xs leading-relaxed text-coral" role="alert">
+          {error}
+        </p>
+      )}
     </label>
   );
 }

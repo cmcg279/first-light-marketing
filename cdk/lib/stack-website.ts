@@ -7,6 +7,7 @@ import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cwActions from "aws-cdk-lib/aws-cloudwatch-actions";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
@@ -86,6 +87,14 @@ export class WebsiteStack extends cdk.Stack {
         pointInTimeRecoveryEnabled: !isDev,
       },
       removalPolicy,
+    });
+    // The worker's status rows use this index (GSI1PK="RUNS", GSI1SK=<started_at>#<run_id>).
+    // Adding it updates the existing table in place. It does not create or replace the table.
+    table.addGlobalSecondaryIndex({
+      indexName: "GSI1",
+      partitionKey: { name: "GSI1PK", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "GSI1SK", type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
     });
 
     const senderIdentity = isProduction
@@ -342,6 +351,14 @@ export class WebsiteStack extends cdk.Stack {
     addLambdaErrorAlarm(this, "ContactFnErrors", contactFn, alarmTopic);
     addLambdaErrorAlarm(this, "AdminFnErrors", adminFn, alarmTopic);
     addMonthlyBudget(this, props.stage, isProduction ? 65 : 13, alertEmail);
+    addPresenceAudit(this, {
+      stage: props.stage,
+      isDev,
+      table,
+      auditReportsBucket,
+      adminFn,
+      alarmTopic,
+    });
 
     // Authorization is intentionally absent. OAC overwrites that header with its
     // own SigV4 signature, so the app sends its bearer token in
@@ -625,6 +642,227 @@ export class WebsiteStack extends cdk.Stack {
   }
 }
 
+interface PresenceAuditProps {
+  stage: string;
+  isDev: boolean;
+  table: dynamodb.Table;
+  auditReportsBucket: s3.Bucket;
+  adminFn: lambda.Function;
+  alarmTopic: sns.ITopic;
+}
+
+// Async invoke policy for AuditWorkerFn. Maximum event age is Lambda's 60 second minimum.
+const auditWorkerAsyncInvoke = {
+  retryAttempts: 0,
+  maxEventAge: cdk.Duration.minutes(1),
+};
+
+function addPresenceAudit(stack: cdk.Stack, props: PresenceAuditProps) {
+  const capUsd = moneySetting(stack, "FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD", "auditMonthlyCapUsd", 0, 0);
+  const estimateUsd = moneySetting(
+    stack,
+    "FIRST_LIGHT_AUDIT_RUN_COST_ESTIMATE_USD",
+    "auditRunCostEstimateUsd",
+    6,
+    0.01,
+  );
+  const allowReal = settingString(stack, "FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL", "auditWorkerAllowReal", "") === "true";
+  const defaultTestMode = settingString(stack, "FIRST_LIGHT_PRESENCE_DEFAULT_TEST_MODE", "presenceDefaultTestMode", "true") !== "false";
+  const image = auditWorkerImage(stack);
+
+  props.adminFn.addEnvironment("AUDIT_MONTHLY_CAP_USD", String(capUsd));
+  props.adminFn.addEnvironment("AUDIT_RUN_COST_ESTIMATE_USD", String(estimateUsd));
+  props.adminFn.addEnvironment("AUDIT_REAL_RUNS_ENABLED", allowReal ? "true" : "false");
+  props.adminFn.addEnvironment("PRESENCE_DEFAULT_TEST_MODE", defaultTestMode ? "true" : "false");
+
+  // No image means no worker, no new IAM role, and no social-audit secret.
+  // Production stays free of those resources until FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG is set.
+  // The GSI on the existing table is added either way.
+  if (!image) return;
+
+  const memorySize = integerSetting(
+    stack,
+    "FIRST_LIGHT_AUDIT_WORKER_MEMORY_MB",
+    "auditWorkerMemoryMb",
+    2048,
+    128,
+    10240,
+    "FIRST_LIGHT_AUDIT_WORKER_MEMORY_MB",
+  );
+  const timeoutMinutes = integerSetting(
+    stack,
+    "FIRST_LIGHT_AUDIT_WORKER_TIMEOUT_MINUTES",
+    "auditWorkerTimeoutMinutes",
+    15,
+    1,
+    15,
+    "FIRST_LIGHT_AUDIT_WORKER_TIMEOUT_MINUTES",
+  );
+  const ephemeralMb = integerSetting(
+    stack,
+    "FIRST_LIGHT_AUDIT_WORKER_EPHEMERAL_MB",
+    "auditWorkerEphemeralMb",
+    512,
+    512,
+    10240,
+    "FIRST_LIGHT_AUDIT_WORKER_EPHEMERAL_MB",
+  );
+  // Unset by default. This account's concurrent-executions quota is 10, and Lambda
+  // keeps 10 unreserved, so ReservedConcurrentExecutions: 1 fails the deploy.
+  const reservedConcurrency = reservedConcurrencySetting(stack);
+  const socialAuditSecret = new secretsmanager.Secret(stack, "SocialAuditSecret", {
+    secretName: `first-light/${props.stage}/social-audit`,
+    description: "JSON keys APIFY_TOKEN, GOOGLE_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY. Generated once. Test mode does not read this.",
+    // GenerateSecretString is applied when the secret is created. A later deploy
+    // does not write it again unless this block changes, so a token entered with
+    // put-secret-value is not replaced by the empty template.
+    generateSecretString: {
+      secretStringTemplate: JSON.stringify({
+        APIFY_TOKEN: "",
+        GOOGLE_API_KEY: "",
+        OPENAI_API_KEY: "",
+        GEMINI_API_KEY: "",
+      }),
+      generateStringKey: "cdkGenerated",
+    },
+    removalPolicy: props.isDev ? cdk.RemovalPolicy.DESTROY : cdk.RemovalPolicy.RETAIN,
+  });
+  const repository = ecr.Repository.fromRepositoryName(stack, "AuditWorkerRepo", image.repositoryName);
+  const worker = new lambda.DockerImageFunction(stack, "AuditWorkerFn", {
+    code: lambda.DockerImageCode.fromEcr(repository, { tagOrDigest: image.tag }),
+    architecture: lambda.Architecture.ARM_64,
+    memorySize,
+    timeout: cdk.Duration.minutes(timeoutMinutes),
+    ephemeralStorageSize: cdk.Size.mebibytes(ephemeralMb),
+    ...(reservedConcurrency === undefined ? {} : { reservedConcurrentExecutions: reservedConcurrency }),
+    description: "First Light online presence audit worker. social_audit.job.handler. Test mode does not call Apify or AI.",
+    // No async retries. A throttled or crashed invoke must not be replayed after the
+    // portal has marked the run failed and released the cap.
+    ...auditWorkerAsyncInvoke,
+    environment: {
+      AUDIT_REPORTS_BUCKET_NAME: props.auditReportsBucket.bucketName,
+      AUDIT_REPORTS_PREFIX: "",
+      AUDIT_TABLE_NAME: props.table.tableName,
+      SOCIAL_AUDIT_SECRET_ID: socialAuditSecret.secretArn,
+      // Set whenever real runs are not explicitly allowed, so a bad event cannot spend.
+      ...(allowReal ? {} : { SOCIAL_AUDIT_TEST_MODE: "1" }),
+    },
+  });
+
+  worker.addToRolePolicy(
+    new iam.PolicyStatement({
+      actions: ["s3:GetObject", "s3:PutObject"],
+      resources: [props.auditReportsBucket.arnForObjects("runs/*")],
+    }),
+  );
+  worker.addToRolePolicy(
+    new iam.PolicyStatement({
+      actions: ["s3:ListBucket"],
+      resources: [props.auditReportsBucket.bucketArn],
+      conditions: { StringLike: { "s3:prefix": ["runs/", "runs/*"] } },
+    }),
+  );
+  socialAuditSecret.grantRead(worker);
+  worker.addToRolePolicy(
+    new iam.PolicyStatement({
+      actions: ["dynamodb:UpdateItem"],
+      resources: [props.table.tableArn],
+      conditions: {
+        "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["BIZ#*"] },
+        Null: { "dynamodb:LeadingKeys": "false" },
+      },
+    }),
+  );
+
+  worker.grantInvoke(props.adminFn);
+  props.adminFn.addEnvironment("AUDIT_WORKER_FUNCTION_NAME", worker.functionName);
+  addLambdaErrorAlarm(stack, "AuditWorkerFnErrors", worker, props.alarmTopic);
+
+  new cdk.CfnOutput(stack, "AuditWorkerFunctionName", { value: worker.functionName });
+  new cdk.CfnOutput(stack, "SocialAuditSecretArn", {
+    value: socialAuditSecret.secretArn,
+    description: "JSON secret. APIFY_TOKEN, GOOGLE_API_KEY, OPENAI_API_KEY, and GEMINI_API_KEY start empty. Later deploys do not reset them unless the generate block changes.",
+  });
+}
+
+function auditWorkerImage(scope: Construct) {
+  const uri = settingString(scope, "FIRST_LIGHT_AUDIT_WORKER_IMAGE", "auditWorkerImage", "");
+  if (uri) {
+    const remainder = uri.includes(".amazonaws.com/") ? uri.split(".amazonaws.com/")[1].split("@")[0] : uri.split("@")[0];
+    const colon = remainder.lastIndexOf(":");
+    if (colon <= 0) {
+      throw new Error("FIRST_LIGHT_AUDIT_WORKER_IMAGE must be an ECR image URI or repository:tag.");
+    }
+    return checkedImage(remainder.slice(0, colon), remainder.slice(colon + 1));
+  }
+
+  const tag = settingString(scope, "FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG", "auditWorkerImageTag", "");
+  if (!tag) return undefined;
+  const repositoryName = settingString(
+    scope,
+    "FIRST_LIGHT_AUDIT_WORKER_IMAGE_REPO",
+    "auditWorkerImageRepo",
+    "first-light-audit-worker",
+  );
+  return checkedImage(repositoryName, tag);
+}
+
+function checkedImage(repositoryName: string, tag: string) {
+  if (!/^[a-z0-9]+(?:[._/-][a-z0-9]+)*$/.test(repositoryName)) {
+    throw new Error("The audit worker ECR repository name is invalid.");
+  }
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(tag)) {
+    throw new Error("The audit worker image tag is invalid.");
+  }
+  return { repositoryName, tag };
+}
+
+function moneySetting(scope: Construct, envName: string, contextKey: string, fallback: number, minimum: number) {
+  const raw = settingString(scope, envName, contextKey, String(fallback));
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < minimum || value > 100_000) {
+    throw new Error(`${envName} must be a number from ${minimum} to 100000.`);
+  }
+  return value;
+}
+
+function reservedConcurrencySetting(scope: Construct) {
+  const raw = settingString(scope, "FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY", "auditWorkerReservedConcurrency", "none");
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "none" || normalized === "unset" || normalized === "0") return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || (value !== 1 && value !== 2)) {
+    throw new Error("FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY must be none, unset, 0, 1, or 2.");
+  }
+  return value;
+}
+
+function integerSetting(
+  scope: Construct,
+  envName: string,
+  contextKey: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  label: string,
+) {
+  const raw = settingString(scope, envName, contextKey, String(fallback));
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${label} must be an integer from ${minimum} to ${maximum}.`);
+  }
+  return value;
+}
+
+function settingString(scope: Construct, envName: string, contextKey: string, fallback: string) {
+  const fromEnv = process.env[envName]?.trim();
+  if (fromEnv) return fromEnv;
+  const fromContext = scope.node.tryGetContext(contextKey);
+  if (typeof fromContext === "string" && fromContext.trim()) return fromContext.trim();
+  if (typeof fromContext === "number" && Number.isFinite(fromContext)) return String(fromContext);
+  return fallback;
+}
+
 function splitCsv(value: string | undefined) {
   return (value || "")
     .split(",")
@@ -684,6 +922,7 @@ function addLambdaErrorAlarm(stack: cdk.Stack, id: string, fn: lambda.Function, 
 }
 
 function addMonthlyBudget(stack: cdk.Stack, stage: string, amountUsd: number, alertEmail: string) {
+  // Existing account-spend alert. The portal does not refuse a run when this budget is crossed.
   // This account's Budgets API only accepts USD. $65 / $13 is about £50 / £10.
   const subscribers = [{ subscriptionType: "EMAIL", address: alertEmail }];
   new budgets.CfnBudget(stack, "MonthlyBudget", {

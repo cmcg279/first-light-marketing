@@ -5,6 +5,9 @@ import type {
   BlogPost,
   ManagedSiteContent,
   MediaAsset,
+  PresenceRun,
+  PresenceRunInput,
+  PresenceSpendSummary,
 } from "../types/admin";
 
 const ADMIN_TOKEN_KEY = "first-light-admin-token";
@@ -301,6 +304,55 @@ export async function uploadAuditReportPdf(id: string, file: File) {
   });
 
   return completed.report;
+}
+
+export async function getPresenceRuns() {
+  return request<{ runs: PresenceRun[]; spend: PresenceSpendSummary }>("/api/admin/presence/runs", {
+    headers: authHeaders(),
+  });
+}
+
+export async function getPresenceRun(id: string) {
+  return request<{ run: PresenceRun; spend: PresenceSpendSummary }>(`/api/admin/presence/runs/${id}`, {
+    headers: authHeaders(),
+  });
+}
+
+export async function createPresenceRun(input: PresenceRunInput) {
+  return request<{ run: PresenceRun; spend: PresenceSpendSummary }>("/api/admin/presence/runs", {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify(input),
+  });
+}
+
+export async function cancelPresenceRun(id: string) {
+  return request<{ run: PresenceRun; spend: PresenceSpendSummary }>(`/api/admin/presence/runs/${id}/cancel`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({}),
+  });
+}
+
+export async function retryPresenceRun(id: string) {
+  return request<{ run: PresenceRun; spend: PresenceSpendSummary }>(`/api/admin/presence/runs/${id}/retry`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({}),
+  });
+}
+
+export async function getPresenceDownloadUrl(id: string) {
+  const result = await request<{ downloadUrl: string; expiresIn: number }>(
+    `/api/admin/presence/runs/${id}/download`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({}),
+    },
+  );
+
+  return result.downloadUrl;
 }
 
 export async function getPublicContent() {

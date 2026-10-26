@@ -155,6 +155,66 @@ export interface AuditReport {
   completedAt?: string;
 }
 
+export interface PresenceHandles {
+  instagram: string;
+  tiktok: string;
+  facebook: string;
+}
+
+export type PresenceRunStatus = "queued" | "running" | "succeeded" | "needs_review" | "failed" | "cancelled";
+export type PresenceStatusLabel = "Queued" | "Running" | "Completed" | "Needs review" | "Failed" | "Cancelled" | "Not tracked";
+export type PresenceCostLabel = "Free" | "Estimated" | "Actual" | "Released";
+
+export interface PresenceRun {
+  id: string;
+  businessId: string;
+  company: string;
+  website: string;
+  handles: PresenceHandles;
+  business: string;
+  area: string;
+  testMode: boolean;
+  status: PresenceRunStatus;
+  statusLabel: PresenceStatusLabel;
+  completed: boolean;
+  errorCode?: string;
+  errorMessage?: string;
+  qualityFailures: string[];
+  statusMessage: string;
+  fileName: string;
+  estimatedCostUsd: number;
+  costUsd?: number;
+  costLabel: PresenceCostLabel;
+  trackingStopped: boolean;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+  downloadReady: boolean;
+}
+
+export interface PresenceSpendSummary {
+  month: string;
+  monthToDateUsd: number;
+  capUsd: number;
+  estimatePerRunUsd: number;
+  realRunsEnabled: boolean;
+  workerConfigured: boolean;
+  defaultTestMode: boolean;
+}
+
+export interface PresenceRunInput {
+  company: string;
+  website: string;
+  handles?: {
+    instagram?: string;
+    tiktok?: string;
+    facebook?: string;
+  };
+  business?: string;
+  area?: string;
+  testMode: boolean;
+}
+
 export interface AdminLead {
   id: string;
   createdAt: string;

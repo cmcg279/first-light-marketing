@@ -72,6 +72,31 @@ export FIRST_LIGHT_AUDIT_RUNNER_TOKEN="the-existing-runner-token"  # required on
 
 `FIRST_LIGHT_ADMIN_PASSWORD` and `FIRST_LIGHT_ADMIN_SESSION_SECRET` are no longer read. Admin sign-in is Cognito only.
 
+### Online presence audits (optional)
+
+Leave these unset for a normal production deploy. The audit worker, its role, and the social-audit JSON secret are created only when an image tag is set. Without that tag the stack does not gain a Lambda. The table, buckets, and user pool are not replaced. The existing table does gain `GSI1` (`GSI1PK` / `GSI1SK`) so presence runs can be listed without a scan. That index update is in place. The table does not gain a TTL attribute. The presence-audit lock is one item, and the next conditional put treats it as free once `expiresAt` is in the past, so DynamoDB TTL is not required. Leaving TTL off keeps that change out of the production diff, including a deploy with no worker image.
+
+Production does not set a monthly cap, so the portal does not reserve money or refuse a run for spend. `FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD` unset or `0` is that mode, and it is the CDK default (`AUDIT_MONTHLY_CAP_USD=0` on AdminFn). Each finished run still stores the worker's `cost_usd`. Dev can export a positive cap when a stack should refuse a real run that would pass it. The one-run lock and the reserved-concurrency setting are unchanged. Account spend is watched by the existing AWS Budget alert (see Alarms and budgets), not by stopping runs in Reports. Reset that month's presence spend counter before turning a cap back on in a month that already has one: amounts left from an earlier reservation stay in the counter when the cap goes from `0` to a positive value.
+
+```bash
+export FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG=""          # empty skips the worker
+export FIRST_LIGHT_AUDIT_WORKER_IMAGE_REPO="first-light-audit-worker"
+# Leave the monthly cap unset in production. Dev may set a positive amount, for example 65.
+# export FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD="65"
+export FIRST_LIGHT_AUDIT_RUN_COST_ESTIMATE_USD="6"    # used only when a cap above 0 is set
+# Leave reserved concurrency unset. See AUDIT_REPORTS.md.
+```
+
+Do not export `FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true` until a dev test run has been checked. Real mode is off unless that value is exactly `true`. While it is off, the worker gets `SOCIAL_AUDIT_TEST_MODE=1`. Dev and production both default the worker to free test mode. The full build, push, and dev test steps are in [AUDIT_REPORTS.md](AUDIT_REPORTS.md). Do not put an Apify token or an AI key in the environment. The worker secret is one JSON object (`APIFY_TOKEN`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) created with `GenerateSecretString` when the image tag is set. A later stack update does not reset values entered in Secrets Manager unless that generate block changes. Production retains the secret.
+
+This account's Lambda concurrent-executions quota is 10. Lambda keeps 10 unreserved, so `ReservedConcurrentExecutions: 1` fails the deploy with "decreases account's UnreservedConcurrentExecution below its minimum value of [10]". The same failure would hit production. `FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY` therefore defaults to unset. `none` and `unset` do the same. A value of `0` is also off: it does not reserve zero executions, and the property is omitted. The function is created with no reserved concurrency. After the quota is raised to 100 or more, turn it back on and redeploy:
+
+```bash
+export FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY="1"
+```
+
+`2` is the highest value this stack accepts.
+
 MFA and the Lambda runtime have their own switches. Leave them unset for the first production deploy. `cdk.json` defaults are `mfa=optional` and `lambdaRuntime=nodejs20.x`. The environment variable wins when it is set.
 
 ```bash
@@ -124,7 +149,7 @@ Create the dev admin user in the Cognito console (self sign-up is off). Use an e
 
 Confirm:
 
-- the marketing pages load, including a refresh on `/about` and `/blog`
+- the marketing pages load, including a refresh on `/about` and `/blog`. A blog post slug must not contain a dot: the CloudFront SPA function treats a path with a dot as a file and leaves it unchanged, so S3 returns 403. Dashes work (`my-post`), dots do not (`my.post`)
 - the contact form returns success and a row appears in the dev table
 - no email arrives
 - `/admin` signs in with the password only
@@ -187,7 +212,7 @@ curl -sS -D - -o /dev/null -X OPTIONS "$SITE/api/contact" \
   -H "Access-Control-Request-Headers: content-type,x-amz-content-sha256,x-first-light-authorization"
 ```
 
-Expect 204, `access-control-allow-origin: http://localhost:5173`, and an allow-headers value that includes `x-amz-content-sha256`. Repeat with `Origin: https://evil.example`. That response must not echo the evil origin.
+Expect 204, `access-control-allow-origin: http://localhost:5173`, and an allow-headers value that includes `x-amz-content-sha256`. Repeat with `Origin: https://evil.example`. That response must not echo the evil origin. The function always sends `access-control-allow-methods`, `access-control-allow-headers`, and `access-control-max-age`. It sets `access-control-allow-origin` only when the request `Origin` is in the allowed-origins list. Production adds `https://` plus each `FIRST_LIGHT_DOMAIN_NAMES` entry, and `https://d2w5467qfdqefq.cloudfront.net`, to that list. With the production domain export, a preflight from `https://firstlightmarketing.co.uk` or `https://www.firstlightmarketing.co.uk` gets `access-control-allow-origin` echoed back. A synth that leaves `FIRST_LIGHT_DOMAIN_NAMES` unset does not include the apex, so that preflight omits `access-control-allow-origin`.
 
 ### MFA enrolment on dev, including abandoning it
 
@@ -225,6 +250,7 @@ Read the diff before approving anything. All of the following must be true:
 - `AWS::Cognito::UserPoolDomain` (`AdminUserPoolDomain`) shows no change. The domain prefix is the same.
 - `AWS::Cognito::UserPoolClient` shows no change. Callback URLs, logout URLs, and the client id stay as they are. If the diff adds or removes a URL, fix the environment variables above and run the diff again. Do not deploy a client change in phase 1.
 - The DynamoDB table, site bucket, media bucket, audit-report bucket, and user pool are not replaced. A replacement shows the resource being destroyed and created again.
+- With `FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG` unset, there is no `AuditWorkerFn`, no `SocialAuditSecret`, and no new bucket. AdminFn may show `AUDIT_MONTHLY_CAP_USD` as `0` (no portal cap, no per-run reservation) and `AUDIT_RUN_COST_ESTIMATE_USD` as `6` (used only if a later deploy sets the cap above 0). The existing table may gain `GSI1`. That is an in-place index update, not a new table and not a replacement. The table should not gain `TimeToLiveSpecification`. The presence lock does not use DynamoDB TTL.
 
 Phase 1 may still change Lambda code, function URL auth, the distribution, headers, and alarms. Those are in place. Phase 2's diff should be the user pool MFA setting moving from optional to required, and nothing else.
 
@@ -321,7 +347,7 @@ CloudTrail is not in the stack. The first management-event trail in an account i
 
 Two standard CloudWatch alarms per stack (Lambda errors, five-minute period). The first ten alarms in an account are free; after that each is about $0.10/month. SNS email to confirm the alarm is inside the free tier at this volume.
 
-The first two AWS Budgets in an account are free. Each budget after that is about $0.02/day. Dev plus production is two budgets. This account only accepts USD, so production is $65/month and dev is $13/month (about £50 and £10), filtered to the `FirstLightStage` tag. Alerts fire on actual spend at 80% and 100%, and on the forecast at 100%.
+The first two AWS Budgets in an account are free. Each budget after that is about $0.02/day. Dev plus production is two budgets. This account only accepts USD, so production is $65/month and dev is $13/month (about £50 and £10), filtered to the `FirstLightStage` tag. Alerts fire on actual spend at 80% and 100%, and on the forecast at 100%. That email is how spend is watched. The Reports tab does not stop a run when the budget is crossed. The portal cap stays off unless `FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD` is set above 0.
 
 ## Production resources this change must not replace
 
