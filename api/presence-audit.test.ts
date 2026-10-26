@@ -819,7 +819,6 @@ describe("presence audit API", () => {
       "12345678901234567890",
       "https://www.google.co.uk/maps/place/London",
       "https://google.de/maps/place/Berlin",
-      "https://www.google.com./maps/place/Harbour",
     ];
     for (const googleMaps of accepted) {
       const store = memoryStore();
@@ -928,7 +927,7 @@ describe("presence audit API", () => {
   });
 
   it("accepts and rejects Google Maps values the same way as the worker", async () => {
-    // This table must match the worker's parse_maps_input (Report-Generator-FLM#24).
+    // This table must match the worker's parse_maps_input (Report-Generator-FLM#24 at ca840b8).
     const table: Array<[string, boolean]> = [
       ["https://www.google.co.uk/maps/place/London", true],
       ["https://google.ie/maps/place/Dublin", true],
@@ -948,6 +947,10 @@ describe("presence audit API", () => {
       ["Foo`Bar", false],
       ["Foo\\Bar", false],
       ["Foo\tBar", false],
+      ["https://www.google.com/maps/place/Har\nbour", false],
+      ["https://www.google.com/maps/place/Har\u200bbour", false],
+      ["https://www.google.com/maps/place/Har\u00a0bour", false],
+      ["https://www.google.com./maps/place/Harbour", false],
       ["https://www.google.com.br/maps/place/Sao", false],
       ["https://google.co.jp/maps/place/Tokyo", false],
       ["https://www.google.gr/maps/place/Athens", false],

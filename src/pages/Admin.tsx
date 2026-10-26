@@ -1498,7 +1498,8 @@ function PresenceAudits({
   }, [runs, onRefresh]);
 
   const realBlocked = !spend.realRunsEnabled;
-  const canSubmit = Boolean(company.trim() && spend.workerConfigured) && !saving;
+  const hasAnchor = Boolean(website.trim() || googleMaps.trim() || instagram.trim() || tiktok.trim() || facebook.trim());
+  const canSubmit = Boolean(company.trim() && hasAnchor && spend.workerConfigured) && !saving;
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -1586,6 +1587,11 @@ function PresenceAudits({
             {submitError === "A run is already in progress." && (
               <p className="rounded-lg border border-coral/20 bg-white px-3 py-2 font-sans text-xs leading-relaxed text-coral" role="alert">
                 A run is already in progress.
+              </p>
+            )}
+            {!hasAnchor && (
+              <p className="font-sans text-xs leading-relaxed text-body/55">
+                Add a website, a Google Maps link, or a social handle. Spaces alone do not count.
               </p>
             )}
           </div>

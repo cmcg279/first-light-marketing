@@ -58,35 +58,13 @@ const REQUEST_KEYS = new Set([
   "business_id",
 ]);
 const PDF_STATUSES = new Set<string>(["succeeded", "needs_review"]);
-/** Letters, digits, and URL characters. No spaces, quotes, or unencoded non-ASCII. */
+/** Letters, digits, and URL characters. Checked on the raw trimmed string before URL parsing. */
 const GOOGLE_MAPS_CHARS = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/;
 const PLACE_ID = /^(ChIJ|GhIJ)[A-Za-z0-9_-]{10,200}$/;
 const MAPS_CID = /^\d{10,22}$/;
-/** Exact hosts from the worker's parse_maps_input. www. is allowed in front of these only. */
-const GOOGLE_MAPS_HOSTS = new Set([
-  "google.com",
-  "google.co.uk",
-  "google.ie",
-  "google.fr",
-  "google.de",
-  "google.es",
-  "google.it",
-  "google.nl",
-  "google.be",
-  "google.ca",
-  "google.com.au",
-  "google.co.nz",
-  "google.pt",
-  "google.se",
-  "google.dk",
-  "google.no",
-  "google.fi",
-  "google.ch",
-  "google.at",
-  "google.pl",
-  "google.co.za",
-  "google.co.in",
-]);
+/** Lowercased hostname, including a trailing dot. Matches the worker probe of parse_maps_input at ca840b8. */
+const GOOGLE_MAPS_HOST =
+  /^(?:www\.|maps\.)?google\.(?:com|co\.uk|ie|fr|de|es|it|nl|be|ca|com\.au|co\.nz|pt|se|dk|no|fi|ch|at|pl|co\.za|co\.in)$/;
 const GOOGLE_MAPS_MESSAGE =
   "Google Maps link must be an https Google Maps URL (an allow-listed Google host with a /maps path, maps.google.com, maps.app.goo.gl, or goo.gl/maps) or a place ID (starts ChIJ) or CID.";
 const GOOGLE_MAPS_CHARS_MESSAGE =
@@ -1157,9 +1135,9 @@ function isIpAddress(host: string) {
 
 /**
  * Host and shape only. This must not fetch, HEAD, or follow the link.
- * Rules match the worker's parse_maps_input (Report-Generator-FLM#24). The worker
- * repository was not readable here, so the character set, host allow-list, place ID,
- * and CID patterns are that function's published rules.
+ * Rules match the worker's parse_maps_input (Report-Generator-FLM#24 at ca840b8).
+ * The character test runs on the raw trimmed string before new URL(). The host is
+ * lowercased and is not stripped of a trailing dot.
  */
 function checkGoogleMaps(value: unknown): string {
   if (typeof value !== "string") fail(GOOGLE_MAPS_MESSAGE);
@@ -1180,7 +1158,7 @@ function checkGoogleMaps(value: unknown): string {
   if (url.protocol !== "https:") fail("Google Maps link must use https.");
   if (url.username || url.password) fail("Google Maps link must not include a username or password.");
   if (url.port || explicitPort(trimmed)) fail("Google Maps link must not include a port.");
-  const host = url.hostname.toLowerCase().replace(/\.$/, "").replace(/^\[|\]$/g, "");
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (isIpAddress(host)) fail("Google Maps link must be a Google host, not an IP address.");
   if (!googleMapsHostAllowed(host, url.pathname)) fail(GOOGLE_MAPS_MESSAGE);
   return trimmed;
@@ -1206,13 +1184,8 @@ function explicitPort(value: string) {
 function googleMapsHostAllowed(host: string, pathname: string) {
   if (host === "maps.google.com" || host === "maps.app.goo.gl") return true;
   if (host === "goo.gl") return pathname.startsWith("/maps");
-  if (listedGoogleHost(host)) return pathname.startsWith("/maps");
+  if (GOOGLE_MAPS_HOST.test(host)) return pathname.startsWith("/maps");
   return false;
-}
-
-function listedGoogleHost(host: string) {
-  if (GOOGLE_MAPS_HOSTS.has(host)) return true;
-  return host.startsWith("www.") && GOOGLE_MAPS_HOSTS.has(host.slice("www.".length));
 }
 
 function googleMapsOption(options: Record<string, unknown>) {
