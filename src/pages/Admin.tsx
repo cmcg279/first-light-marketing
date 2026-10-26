@@ -1551,9 +1551,9 @@ function PresenceAudits({
             <TextField label="Legal name (optional)" value={legalName} onChange={setLegalName} />
             <TextField label="Area (optional)" value={area} onChange={setArea} />
             <TextField
-              label="Google Maps link or place ID (optional)"
+              label="Google Maps link, place ID (starts ChIJ) or CID (optional)"
               value={googleMaps}
-              hint="Helps match the right Google listing, especially for businesses with no website."
+              hint="Helps match the right Google listing, especially for businesses with no website. Use a Maps link, a place ID (starts ChIJ) or CID."
               onChange={setGoogleMaps}
             />
             <label className="rounded-lg border border-coral/25 bg-white px-4 py-3">

@@ -927,6 +927,53 @@ describe("presence audit API", () => {
     }
   });
 
+  it("accepts and rejects Google Maps values the same way as the worker", async () => {
+    // This table must match the worker's parse_maps_input (Report-Generator-FLM#24).
+    const table: Array<[string, boolean]> = [
+      ["https://www.google.co.uk/maps/place/London", true],
+      ["https://google.ie/maps/place/Dublin", true],
+      ["https://www.google.com.au/maps/place/Sydney", true],
+      ["ChIJN1t_tDeuEmsRUsoyG83frY4", true],
+      ["GhIJQWDl0CIeQUARxks3icF8U8A", true],
+      ["12345678901234567890", true],
+      ["place/Café+Bar", false],
+      ["Foo Bar", false],
+      ['Foo"Bar', false],
+      ["Foo<Bar", false],
+      ["Foo>Bar", false],
+      ["Foo|Bar", false],
+      ["Foo{Bar", false],
+      ["Foo}Bar", false],
+      ["Foo^Bar", false],
+      ["Foo`Bar", false],
+      ["Foo\\Bar", false],
+      ["Foo\tBar", false],
+      ["https://www.google.com.br/maps/place/Sao", false],
+      ["https://google.co.jp/maps/place/Tokyo", false],
+      ["https://www.google.gr/maps/place/Athens", false],
+      ["https://google.com.mx/maps/place/Mexico", false],
+      ["https://google.cz/maps/place/Prague", false],
+      ["https://www.google.com.sg/maps/place/Singapore", false],
+      ["https://google.hu/maps/place/Budapest", false],
+      ["HarbourCafe", false],
+      ["123456789", false],
+      ["12345678901234567890123", false],
+    ];
+    for (const [googleMaps, ok] of table) {
+      const store = memoryStore();
+      const response = await postRun(store, { ...validBody(), googleMaps }, testConfig());
+      const label = JSON.stringify(googleMaps);
+      if (ok) {
+        assert.equal(response.statusCode, 200, label);
+        assert.equal((store.invocations[0] as WorkerJob).options.google_maps, googleMaps);
+      } else {
+        assert.equal(response.statusCode, 422, label);
+        assert.match((response.body as { error: string }).error, /Google Maps/, label);
+        assert.equal(store.inserts, 0, label);
+      }
+    }
+  });
+
   it("allows no website when a Maps link or a social handle is set, and omits website from the job", async () => {
     const mapsStore = memoryStore();
     const maps = await postRun(

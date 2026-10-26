@@ -58,10 +58,39 @@ const REQUEST_KEYS = new Set([
   "business_id",
 ]);
 const PDF_STATUSES = new Set<string>(["succeeded", "needs_review"]);
-const PLACE_ID = /^[A-Za-z0-9_-]{10,300}$/;
-const COUNTRY_CODE = /^[a-z]{2}$/;
+/** Letters, digits, and URL characters. No spaces, quotes, or unencoded non-ASCII. */
+const GOOGLE_MAPS_CHARS = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/;
+const PLACE_ID = /^(ChIJ|GhIJ)[A-Za-z0-9_-]{10,200}$/;
+const MAPS_CID = /^\d{10,22}$/;
+/** Exact hosts from the worker's parse_maps_input. www. is allowed in front of these only. */
+const GOOGLE_MAPS_HOSTS = new Set([
+  "google.com",
+  "google.co.uk",
+  "google.ie",
+  "google.fr",
+  "google.de",
+  "google.es",
+  "google.it",
+  "google.nl",
+  "google.be",
+  "google.ca",
+  "google.com.au",
+  "google.co.nz",
+  "google.pt",
+  "google.se",
+  "google.dk",
+  "google.no",
+  "google.fi",
+  "google.ch",
+  "google.at",
+  "google.pl",
+  "google.co.za",
+  "google.co.in",
+]);
 const GOOGLE_MAPS_MESSAGE =
-  "Google Maps link must be an https Google Maps URL (google.com/maps, a Google country /maps URL, maps.google.com, maps.app.goo.gl, or goo.gl/maps) or a place ID.";
+  "Google Maps link must be an https Google Maps URL (an allow-listed Google host with a /maps path, maps.google.com, maps.app.goo.gl, or goo.gl/maps) or a place ID (starts ChIJ) or CID.";
+const GOOGLE_MAPS_CHARS_MESSAGE =
+  "Google Maps link can only use letters, numbers, and URL characters. Spaces, quotes, and other symbols must be encoded.";
 const FAILURE_TEXT: Record<string, string> = {
   website_not_fetched: "The website was not fetched.",
   listing_match_not_high: "The Google listing match was not high enough.",
@@ -1128,15 +1157,18 @@ function isIpAddress(host: string) {
 
 /**
  * Host and shape only. This must not fetch, HEAD, or follow the link.
- * `google_maps` is passed through to the worker, which resolves short links itself.
+ * Rules match the worker's parse_maps_input (Report-Generator-FLM#24). The worker
+ * repository was not readable here, so the character set, host allow-list, place ID,
+ * and CID patterns are that function's published rules.
  */
 function checkGoogleMaps(value: unknown): string {
   if (typeof value !== "string") fail(GOOGLE_MAPS_MESSAGE);
   const trimmed = value.trim();
   if (!trimmed) return "";
+  if (!GOOGLE_MAPS_CHARS.test(trimmed)) fail(GOOGLE_MAPS_CHARS_MESSAGE);
   if (trimmed.length > 500) fail("Google Maps link must be at most 500 characters.");
   if (!looksLikeUrl(trimmed)) {
-    if (PLACE_ID.test(trimmed)) return trimmed;
+    if (PLACE_ID.test(trimmed) || MAPS_CID.test(trimmed)) return trimmed;
     fail(GOOGLE_MAPS_MESSAGE);
   }
   let url: URL;
@@ -1174,22 +1206,13 @@ function explicitPort(value: string) {
 function googleMapsHostAllowed(host: string, pathname: string) {
   if (host === "maps.google.com" || host === "maps.app.goo.gl") return true;
   if (host === "goo.gl") return pathname.startsWith("/maps");
-  if (host === "google.com" || host === "www.google.com" || isGoogleCountryHost(host)) {
-    return pathname.startsWith("/maps");
-  }
+  if (listedGoogleHost(host)) return pathname.startsWith("/maps");
   return false;
 }
 
-function isGoogleCountryHost(host: string) {
-  const labels = host.split(".");
-  if (labels.some((label) => !/^[a-z]+$/.test(label))) return false;
-  const body = labels[0] === "www" ? labels.slice(1) : labels;
-  if (body[0] !== "google") return false;
-  const suffix = body.slice(1);
-  if (suffix.length === 1 && COUNTRY_CODE.test(suffix[0])) return true;
-  if (suffix.length === 2 && suffix[0] === "co" && COUNTRY_CODE.test(suffix[1])) return true;
-  if (suffix.length === 2 && suffix[0] === "com" && COUNTRY_CODE.test(suffix[1])) return true;
-  return false;
+function listedGoogleHost(host: string) {
+  if (GOOGLE_MAPS_HOSTS.has(host)) return true;
+  return host.startsWith("www.") && GOOGLE_MAPS_HOSTS.has(host.slice("www.".length));
 }
 
 function googleMapsOption(options: Record<string, unknown>) {
