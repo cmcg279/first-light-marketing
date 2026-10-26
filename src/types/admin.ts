@@ -173,10 +173,12 @@ export interface PresenceRun {
   handles: PresenceHandles;
   business: string;
   area: string;
+  googleMaps: string;
   testMode: boolean;
   status: PresenceRunStatus;
   statusLabel: PresenceStatusLabel;
   completed: boolean;
+  needsReview: boolean;
   errorCode?: string;
   errorMessage?: string;
   qualityFailures: string[];
@@ -204,7 +206,7 @@ export interface PresenceSpendSummary {
 
 export interface PresenceRunInput {
   company: string;
-  website: string;
+  website?: string;
   handles?: {
     instagram?: string;
     tiktok?: string;
@@ -212,6 +214,7 @@ export interface PresenceRunInput {
   };
   business?: string;
   area?: string;
+  googleMaps?: string;
   testMode: boolean;
 }
 

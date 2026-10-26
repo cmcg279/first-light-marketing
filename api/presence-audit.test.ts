@@ -183,7 +183,8 @@ describe("result states and the cap", () => {
     assert.equal(reviewPublic.status, "needs_review");
     assert.equal(reviewPublic.statusLabel, "Needs review");
     assert.equal(reviewPublic.completed, false);
-    assert.equal(reviewPublic.downloadReady, false);
+    assert.equal(reviewPublic.needsReview, true);
+    assert.equal(reviewPublic.downloadReady, true);
     assert.match(reviewPublic.statusMessage, /longer than 35 pages/);
     assert.match(reviewPublic.statusMessage, /not a completed report/);
 
@@ -207,6 +208,7 @@ describe("result states and the cap", () => {
     const done = overlayWorkerResult(run, { status: "succeeded", quality_gate: { passed: true, failures: [] }, artifacts: { pdf: pdfObjectKey(run) } });
     const donePublic = publicRun(done);
     assert.equal(donePublic.completed, true);
+    assert.equal(donePublic.needsReview, false);
     assert.equal(donePublic.statusLabel, "Completed");
     assert.equal(donePublic.downloadReady, true);
   });
@@ -619,7 +621,7 @@ describe("presence audit API", () => {
     assert.match((blocked.body as { error: string }).error, /\$5\.00 of the \$5\.00 cap/);
   });
 
-  it("downloads only a succeeded result, and a PDF alone does not complete the run", async () => {
+  it("downloads a succeeded or needs_review PDF, and a PDF alone does not complete the run", async () => {
     const store = memoryStore();
     const created = await postRun(store, validBody(), testConfig());
     const run = (created.body as { run: { id: string; businessId: string } }).run;
@@ -647,11 +649,22 @@ describe("presence audit API", () => {
       authorize: allow,
       store,
     });
-    const reviewRun = (review.body as { run: { status: string; completed: boolean; downloadReady: boolean; statusMessage: string } }).run;
+    const reviewRun = (review.body as { run: { status: string; completed: boolean; needsReview: boolean; downloadReady: boolean; statusMessage: string } }).run;
     assert.equal(reviewRun.status, "needs_review");
     assert.equal(reviewRun.completed, false);
-    assert.equal(reviewRun.downloadReady, false);
+    assert.equal(reviewRun.needsReview, true);
+    assert.equal(reviewRun.downloadReady, true);
     assert.match(reviewRun.statusMessage, /35 pages/);
+    const reviewDownload = await handlePresenceRequest({
+      method: "POST",
+      path: `/api/admin/presence/runs/${run.id}/download`,
+      config: testConfig(),
+      now: NOW,
+      authorize: allow,
+      store,
+    });
+    assert.equal(reviewDownload.statusCode, 200);
+    assert.equal((reviewDownload.body as { expiresIn: number }).expiresIn, 300);
 
     store.objects.set(resultObjectKey(run), {
       status: "succeeded",
@@ -666,6 +679,64 @@ describe("presence audit API", () => {
       authorize: allow,
       store,
     });
+    assert.equal(ready.statusCode, 200);
+    assert.equal((ready.body as { expiresIn: number }).expiresIn, 300);
+  });
+
+  it("refuses download for failed, cancelled, queued, and running runs, and for a mismatched needs_review PDF", async () => {
+    for (const status of ["failed", "cancelled", "queued", "running"] as const) {
+      const store = memoryStore();
+      const created = await postRun(store, validBody(), testConfig());
+      const run = (created.body as { run: { id: string; businessId: string } }).run;
+      const key = pdfObjectKey(run);
+      store.markPdf(key);
+      if (status !== "queued") {
+        store.objects.set(resultObjectKey(run), {
+          status,
+          artifacts: { pdf: key },
+          ...(status === "failed" || status === "cancelled" ? { error: { code: "internal", message: "stopped" } } : {}),
+        });
+      }
+      const response = await downloadRun(store, run.id);
+      assert.equal(response.statusCode, 409, status);
+      assert.match((response.body as { error: string }).error, /not ready/);
+    }
+
+    const store = memoryStore();
+    const created = await postRun(store, validBody(), testConfig());
+    const run = (created.body as { run: { id: string; businessId: string } }).run;
+    const key = pdfObjectKey(run);
+    store.markPdf(key);
+    store.objects.set(resultObjectKey(run), {
+      status: "needs_review",
+      quality_gate: { passed: false, failures: ["too_many_pages"] },
+      artifacts: { pdf: "runs/other-business/report.pdf" },
+    });
+    const mismatch = await downloadRun(store, run.id);
+    assert.equal(mismatch.statusCode, 409);
+    assert.match((mismatch.body as { error: string }).error, /not ready/);
+    const viewed = await handlePresenceRequest({
+      method: "GET",
+      path: `/api/admin/presence/runs/${run.id}`,
+      config: testConfig(),
+      now: NOW,
+      authorize: allow,
+      store,
+    });
+    assert.equal((viewed.body as { run: { downloadReady: boolean; status: string } }).run.status, "needs_review");
+    assert.equal((viewed.body as { run: { downloadReady: boolean } }).run.downloadReady, false);
+
+    store.objects.set(resultObjectKey(run), {
+      status: "needs_review",
+      quality_gate: { passed: false, failures: ["too_many_pages"] },
+      artifacts: { pdf: key },
+    });
+    store.pdfs.delete(key);
+    const missing = await downloadRun(store, run.id);
+    assert.equal(missing.statusCode, 409);
+
+    store.markPdf(key);
+    const ready = await downloadRun(store, run.id);
     assert.equal(ready.statusCode, 200);
     assert.equal((ready.body as { expiresIn: number }).expiresIn, 300);
   });
@@ -737,6 +808,257 @@ describe("presence audit API", () => {
     assert.equal(store.objects.has(`runs/${id}/input.json`), false);
     assert.equal(store.objects.has(`runs/harbour-cafe/${id}/input.json`), false);
   });
+
+  it("sends options.google_maps only when a link or place ID is set, and retry keeps it", async () => {
+    const accepted = [
+      "https://www.google.com/maps/place/Harbour+Cafe",
+      "https://maps.google.com/?cid=12345",
+      "https://maps.app.goo.gl/xyz",
+      "https://goo.gl/maps/xyz",
+      "ChIJN1t_tDeuEmsRUsoyG83frY4",
+      "12345678901234567890",
+      "https://www.google.co.uk/maps/place/London",
+      "https://google.de/maps/place/Berlin",
+    ];
+    for (const googleMaps of accepted) {
+      const store = memoryStore();
+      const response = await postRun(store, { ...validBody(), googleMaps: `  ${googleMaps}  ` }, testConfig());
+      assert.equal(response.statusCode, 200, googleMaps);
+      const shown = (response.body as { run: { googleMaps: string } }).run.googleMaps;
+      assert.equal(shown, googleMaps);
+      const sent = store.invocations[0] as WorkerJob;
+      assert.equal(sent.options.google_maps, googleMaps);
+      assert.equal(validateJob(sent).options.google_maps, googleMaps);
+    }
+
+    const bare = memoryStore();
+    const created = await postRun(bare, validBody(), testConfig());
+    assert.equal(created.statusCode, 200);
+    const plain = bare.invocations[0] as WorkerJob;
+    assert.equal("google_maps" in plain.options, false);
+    assert.equal((created.body as { run: { googleMaps: string } }).run.googleMaps, "");
+    for (const googleMaps of ["", "   "]) {
+      const store = memoryStore();
+      const response = await postRun(store, { ...validBody(), googleMaps }, testConfig());
+      assert.equal(response.statusCode, 200);
+      assert.equal("google_maps" in (store.invocations[0] as WorkerJob).options, false);
+    }
+
+    const withLink = sampleRun({ googleMaps: "https://maps.app.goo.gl/xyz" });
+    const roundTrip = runFromItem(runToItem(withLink, workerPayload(withLink)));
+    assert.equal(roundTrip?.googleMaps, "https://maps.app.goo.gl/xyz");
+    assert.equal(workerPayload(withLink).options.google_maps, "https://maps.app.goo.gl/xyz");
+    const without = runFromItem(runToItem(sampleRun(), workerPayload(sampleRun())));
+    assert.equal(without?.googleMaps, "");
+    assert.equal("google_maps" in workerPayload(sampleRun()).options, false);
+
+    const retryStore = memoryStore();
+    retryStore.invokePayload = { status: "failed", error: { code: "internal", message: "stopped" } };
+    const failed = await postRun(
+      retryStore,
+      { ...validBody(), googleMaps: "ChIJN1t_tDeuEmsRUsoyG83frY4" },
+      testConfig(),
+    );
+    assert.equal(failed.statusCode, 200);
+    const failedId = (failed.body as { run: { id: string; status: string } }).run.id;
+    assert.equal((failed.body as { run: { status: string } }).run.status, "failed");
+    const retried = await handlePresenceRequest({
+      method: "POST",
+      path: `/api/admin/presence/runs/${failedId}/retry`,
+      config: testConfig(),
+      now: NOW,
+      authorize: allow,
+      store: retryStore,
+    });
+    assert.equal(retried.statusCode, 200);
+    const retryJob = retryStore.invocations.at(-1) as WorkerJob;
+    assert.equal(retryJob.options.google_maps, "ChIJN1t_tDeuEmsRUsoyG83frY4");
+    assert.equal(retryJob.options.compare_to_run_id, failedId);
+    assert.notEqual(retryJob.run_id, failedId);
+  });
+
+  it("rejects a Google Maps value that is not an https Maps URL or a place ID", async () => {
+    const rejected: Array<[string, RegExp]> = [
+      ["http://www.google.com/maps/place/Harbour", /https/],
+      ["http://maps.app.goo.gl/xyz", /https/],
+      ["https://evil.com/maps", /Google Maps/],
+      ["https://google.com.evil.com/maps", /Google Maps/],
+      ["https://google.com/search?q=x", /Google Maps/],
+      ["https://user:pass@www.google.com/maps/place/Harbour", /username or password/],
+      ["https://user@maps.google.com/?cid=1", /username or password/],
+      ["https://8.8.8.8/maps", /IP address/],
+      ["https://[::1]/maps", /IP address/],
+      ["https://www.google.com:443/maps/place/Harbour", /port/],
+      ["https://maps.google.com:8443/?cid=1", /port/],
+      ["h".repeat(501), /500 characters/],
+      [`https://www.google.com/maps/${"a".repeat(500)}`, /500 characters/],
+    ];
+    for (const [googleMaps, message] of rejected) {
+      const store = memoryStore();
+      const response = await postRun(store, { ...validBody(), googleMaps }, testConfig());
+      assert.equal(response.statusCode, 422, googleMaps.slice(0, 80));
+      assert.match((response.body as { error: string }).error, message);
+      assert.equal(store.inserts, 0);
+      assert.equal(store.invocations.length, 0);
+    }
+
+    const base = workerPayload(sampleRun());
+    assert.throws(
+      () => validateJob({ ...base, options: { ...base.options, google_maps: "https://evil.com/maps" } }),
+      /Google Maps/,
+    );
+    assert.throws(() => validateJob({ ...base, options: { ...base.options, map_url: "https://maps.google.com/" } }), /unknown field/);
+    const allowed = validateJob({
+      ...base,
+      options: { ...base.options, google_maps: "https://maps.google.com/?cid=9" },
+    });
+    assert.equal(allowed.options.google_maps, "https://maps.google.com/?cid=9");
+
+    for (const body of [
+      { ...validBody(), google_maps: "ChIJN1t_tDeuEmsRUsoyG83frY4" },
+      { ...validBody(), notARealField: true },
+    ]) {
+      const store = memoryStore();
+      const response = await postRun(store, body, testConfig());
+      assert.equal(response.statusCode, 422);
+      assert.match((response.body as { error: string }).error, /Unknown field/);
+      assert.equal(store.inserts, 0);
+    }
+  });
+
+  it("accepts and rejects Google Maps values the same way as the worker", async () => {
+    // This table must match the worker's parse_maps_input (Report-Generator-FLM#24 at ca840b8).
+    const table: Array<[string, boolean]> = [
+      ["https://www.google.co.uk/maps/place/London", true],
+      ["https://google.ie/maps/place/Dublin", true],
+      ["https://www.google.com.au/maps/place/Sydney", true],
+      ["ChIJN1t_tDeuEmsRUsoyG83frY4", true],
+      ["GhIJQWDl0CIeQUARxks3icF8U8A", true],
+      ["12345678901234567890", true],
+      ["place/Café+Bar", false],
+      ["Foo Bar", false],
+      ['Foo"Bar', false],
+      ["Foo<Bar", false],
+      ["Foo>Bar", false],
+      ["Foo|Bar", false],
+      ["Foo{Bar", false],
+      ["Foo}Bar", false],
+      ["Foo^Bar", false],
+      ["Foo`Bar", false],
+      ["Foo\\Bar", false],
+      ["Foo\tBar", false],
+      ["https://www.google.com/maps/place/Har\nbour", false],
+      ["https://www.google.com/maps/place/Har\u200bbour", false],
+      ["https://www.google.com/maps/place/Har\u00a0bour", false],
+      ["https://www.google.com./maps/place/Harbour", false],
+      ["https://www.google.com.br/maps/place/Sao", false],
+      ["https://google.co.jp/maps/place/Tokyo", false],
+      ["https://www.google.gr/maps/place/Athens", false],
+      ["https://google.com.mx/maps/place/Mexico", false],
+      ["https://google.cz/maps/place/Prague", false],
+      ["https://www.google.com.sg/maps/place/Singapore", false],
+      ["https://google.hu/maps/place/Budapest", false],
+      ["HarbourCafe", false],
+      ["123456789", false],
+      ["12345678901234567890123", false],
+      ["https:www.google.com/maps/place/X", false],
+      ["https:/www.google.com/maps", false],
+      ["https:///www.google.com/maps", false],
+      ["https://%77ww.google.com/maps/place/X", false],
+      ["https://www.google%2ecom/maps/place/X", false],
+      ["https://www.google.com/x/../maps", false],
+      ["https://www.google.com/./maps", false],
+      ["https://www.google.com/%2e%2e/maps", false],
+    ];
+    for (const [googleMaps, ok] of table) {
+      const store = memoryStore();
+      const response = await postRun(store, { ...validBody(), googleMaps }, testConfig());
+      const label = JSON.stringify(googleMaps);
+      if (ok) {
+        assert.equal(response.statusCode, 200, label);
+        assert.equal((store.invocations[0] as WorkerJob).options.google_maps, googleMaps);
+      } else {
+        assert.equal(response.statusCode, 422, label);
+        assert.match((response.body as { error: string }).error, /Google Maps/, label);
+        assert.equal(store.inserts, 0, label);
+      }
+    }
+  });
+
+  it("allows no website when a Maps link or a social handle is set, and omits website from the job", async () => {
+    const mapsStore = memoryStore();
+    const maps = await postRun(
+      mapsStore,
+      { company: "Harbour Cafe", googleMaps: "https://maps.google.com/?cid=12345678901234567890", testMode: true },
+      testConfig(),
+    );
+    assert.equal(maps.statusCode, 200);
+    assert.equal((maps.body as { run: { website: string; googleMaps: string } }).run.website, "");
+    assert.equal((maps.body as { run: { googleMaps: string } }).run.googleMaps, "https://maps.google.com/?cid=12345678901234567890");
+    const mapsJob = mapsStore.invocations[0] as WorkerJob;
+    assert.equal("website" in mapsJob, false);
+    assert.equal(mapsJob.options.google_maps, "https://maps.google.com/?cid=12345678901234567890");
+
+    const handleStore = memoryStore();
+    const handle = await postRun(
+      handleStore,
+      { company: "Harbour Cafe", handles: { instagram: "harbourcafe" }, testMode: true },
+      testConfig(),
+    );
+    assert.equal(handle.statusCode, 200);
+    assert.equal((handle.body as { run: { website: string } }).run.website, "");
+    const handleJob = handleStore.invocations[0] as WorkerJob;
+    assert.equal("website" in handleJob, false);
+    assert.equal(handleJob.handles.instagram, "harbourcafe");
+
+    const bare = await postRun(memoryStore(), { company: "Harbour Cafe", testMode: true }, testConfig());
+    assert.equal(bare.statusCode, 422);
+    assert.equal((bare.body as { error: string }).error, "Add a website, a Google Maps link, or a social handle.");
+
+    const stillRequired = memoryStore();
+    const withSite = await postRun(stillRequired, validBody(), testConfig());
+    assert.equal(withSite.statusCode, 200);
+    assert.equal((stillRequired.invocations[0] as WorkerJob).website, "https://harbour.example");
+
+    const anchored = sampleRun({ website: "", googleMaps: "https://maps.app.goo.gl/xyz" });
+    const anchoredJob = workerPayload(anchored);
+    assert.equal("website" in anchoredJob, false);
+    assert.equal(validateJob(anchoredJob).website, undefined);
+    assert.equal("website" in validateJob(anchoredJob), false);
+    const roundTrip = runFromItem(runToItem(anchored, anchoredJob));
+    assert.equal(roundTrip?.website, "");
+    assert.equal(roundTrip?.googleMaps, "https://maps.app.goo.gl/xyz");
+    assert.equal(publicRun(anchored).website, "");
+    assert.throws(() => validateJob({ ...anchoredJob, website: "http://harbour.example" }), /https:\/\//);
+    assert.throws(() => validateJob({ ...anchoredJob, website: "" }), /website is required/);
+
+    const retryStore = memoryStore();
+    retryStore.invokePayload = { status: "failed", error: { code: "internal", message: "stopped" } };
+    const failed = await postRun(
+      retryStore,
+      { company: "Harbour Cafe", googleMaps: "https://maps.app.goo.gl/xyz", testMode: true },
+      testConfig(),
+    );
+    assert.equal(failed.statusCode, 200);
+    const failedRun = (failed.body as { run: { id: string; status: string; website: string } }).run;
+    assert.equal(failedRun.website, "");
+    assert.equal(failedRun.status, "failed");
+    const retried = await handlePresenceRequest({
+      method: "POST",
+      path: `/api/admin/presence/runs/${failedRun.id}/retry`,
+      config: testConfig(),
+      now: NOW,
+      authorize: allow,
+      store: retryStore,
+    });
+    assert.equal(retried.statusCode, 200);
+    assert.equal((retried.body as { run: { website: string } }).run.website, "");
+    const retryJob = retryStore.invocations.at(-1) as WorkerJob;
+    assert.equal("website" in retryJob, false);
+    assert.equal(retryJob.options.google_maps, "https://maps.app.goo.gl/xyz");
+    assert.equal(retryJob.options.compare_to_run_id, failedRun.id);
+    assert.notEqual(retryJob.run_id, failedRun.id);
+  });
 });
 
 function validBody() {
@@ -788,6 +1110,17 @@ async function finishSucceeded(
   assert.equal((response.body as { run: { status: string } }).run.status, "succeeded");
 }
 
+async function downloadRun(store: PresenceStore, id: string) {
+  return handlePresenceRequest({
+    method: "POST",
+    path: `/api/admin/presence/runs/${id}/download`,
+    config: testConfig(),
+    now: NOW,
+    authorize: allow,
+    store,
+  });
+}
+
 async function postRun(store: PresenceStore, body: unknown, config: PresenceConfig) {
   return handlePresenceRequest({
     method: "POST",
@@ -817,6 +1150,7 @@ function sampleRun(overrides: Partial<PresenceRun> = {}): PresenceRun {
     handles: { instagram: "harbourcafe", facebook: "https://www.facebook.com/VPJebb" },
     business: "",
     area: "Belfast",
+    googleMaps: "",
     brand: "first_light",
     requestedBy: "admin:test",
     testMode: true,
