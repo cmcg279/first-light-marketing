@@ -29,6 +29,7 @@ import {
   uploadMediaAsset,
 } from "../lib/adminApi";
 import { Seo } from "../components/Seo";
+import { FACEBOOK_FIELD_HINT, facebookFieldError, presenceRunCostText } from "../lib/presenceReport";
 import type {
   AdminLead,
   AuditReport,
@@ -40,6 +41,9 @@ import type {
   PresenceRunInput,
   PresenceSpendSummary,
 } from "../types/admin";
+
+/** Previous Instagram report library. Reports shows presence audits while this is false. */
+const SHOW_LEGACY_AUDIT_REPORTS = false;
 
 const emptyContent: ManagedSiteContent = {
   home: {
@@ -186,7 +190,7 @@ export default function Admin() {
   const [token, setToken] = useState(() => getAdminToken());
   const [loginError, setLoginError] = useState("");
 
-  const [activeTab, setActiveTab] = useState<"leads" | "reports" | "presence" | "announcement" | "settings" | "media">("leads");
+  const [activeTab, setActiveTab] = useState<"leads" | "reports" | "announcement" | "settings" | "media">("leads");
   const [leads, setLeads] = useState<AdminLead[]>([]);
   const [blogPosts, setBlogPosts] = useState<BlogPost[]>([]);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
@@ -508,7 +512,7 @@ export default function Admin() {
 
   async function handleCancelPresenceRun(run: PresenceRun) {
     const confirmed = window.confirm(
-      `Stop tracking the audit for ${run.company}? The worker has no cancel, so a run that has already started may still finish and the spend may already be committed. This releases the cap reservation. Another audit cannot start until this one finishes or 16 minutes have passed.`,
+      `Stop tracking the report for ${run.company}? The worker has no cancel, so a run that has already started may still finish and the spend may already be committed. Any held reservation is released. Another report cannot start until this one finishes or 16 minutes have passed.`,
     );
     if (!confirmed) return;
 
@@ -520,7 +524,7 @@ export default function Admin() {
       const result = await cancelPresenceRun(run.id);
       setPresenceRuns((current) => current.map((item) => (item.id === result.run.id ? result.run : item)));
       setPresenceSpend(result.spend);
-      setStatus("Tracking stopped. The reservation was released. Spend that is already committed is not undone. Another audit waits until this run finishes or 16 minutes have passed.");
+      setStatus("Tracking stopped. Any held reservation was released. Spend that is already committed is not undone. Another report waits until this run finishes or 16 minutes have passed.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not stop tracking the audit.");
     } finally {
@@ -605,7 +609,7 @@ export default function Admin() {
           </p>
           <h1 className="mt-3 font-serif text-3xl font-bold text-body">Sign in</h1>
           <p className="mt-3 font-sans text-sm leading-relaxed text-body/60">
-            View enquiries, run presence audits and manage the site.
+            View enquiries, run reports and manage the site.
           </p>
 
           <div className="mt-8 space-y-5">
@@ -642,7 +646,7 @@ export default function Admin() {
             </p>
             <h1 className="mt-3 font-serif text-4xl font-bold text-body">Admin portal</h1>
             <p className="mt-3 max-w-2xl font-sans text-base leading-relaxed text-body/60">
-              Review form submissions, run presence audits, manage the homepage announcement, update blog settings and upload media.
+              Review form submissions, run reports, manage the homepage announcement, update blog settings and upload media.
             </p>
           </div>
           <button
@@ -666,9 +670,6 @@ export default function Admin() {
           </TabButton>
           <TabButton active={activeTab === "reports"} onClick={() => setActiveTab("reports")}>
             Reports
-          </TabButton>
-          <TabButton active={activeTab === "presence"} onClick={() => setActiveTab("presence")}>
-            Presence
           </TabButton>
           <TabButton active={activeTab === "announcement"} onClick={() => setActiveTab("announcement")}>
             Announcement
@@ -709,7 +710,7 @@ export default function Admin() {
             onSubmit={handleSaveContent}
           />
         )}
-        {activeTab === "presence" && presenceSpend && (
+        {activeTab === "reports" && presenceSpend && !SHOW_LEGACY_AUDIT_REPORTS && (
           <PresenceAudits
             runs={presenceRuns}
             spend={presenceSpend}
@@ -722,7 +723,7 @@ export default function Admin() {
             onRefresh={refreshPresenceRuns}
           />
         )}
-        {activeTab === "reports" && (
+        {activeTab === "reports" && SHOW_LEGACY_AUDIT_REPORTS && (
           <AuditReportsManager
             settings={auditSettings}
             reports={auditReports}
@@ -1460,6 +1461,7 @@ function PresenceAudits({
   const [instagram, setInstagram] = useState("");
   const [tiktok, setTiktok] = useState("");
   const [facebook, setFacebook] = useState("");
+  const [facebookError, setFacebookError] = useState("");
   const [legalName, setLegalName] = useState("");
   const [area, setArea] = useState("");
   const [testMode, setTestMode] = useState(spend.defaultTestMode);
@@ -1478,12 +1480,14 @@ function PresenceAudits({
     return () => window.clearInterval(timer);
   }, [runs, onRefresh]);
 
-  const usedPercent = spend.capUsd <= 0 ? 100 : Math.min(100, (spend.monthToDateUsd / spend.capUsd) * 100);
   const realBlocked = !spend.realRunsEnabled;
   const canSubmit = Boolean(company.trim() && website.trim() && spend.workerConfigured) && !saving;
 
   function submit(event: FormEvent) {
     event.preventDefault();
+    const nextFacebookError = facebookFieldError(facebook);
+    setFacebookError(nextFacebookError || "");
+    if (nextFacebookError) return;
     const handles: NonNullable<PresenceRunInput["handles"]> = {};
     if (instagram.trim()) handles.instagram = instagram.trim();
     if (tiktok.trim()) handles.tiktok = tiktok.trim();
@@ -1500,52 +1504,32 @@ function PresenceAudits({
 
   return (
     <div className="mt-8">
-      <div className="rounded-lg border border-body/10 bg-white p-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="font-sans text-xs font-semibold uppercase tracking-[0.18em] text-coral">This month</p>
-            <p className="mt-2 font-serif text-3xl font-bold text-body">
-              {formatUsd(spend.monthToDateUsd)}{" "}
-              <span className="font-sans text-base font-medium text-body/50">of {formatUsd(spend.capUsd)}</span>
-            </p>
-            <p className="mt-2 max-w-2xl font-sans text-sm leading-relaxed text-body/60">
-              A real run reserves {formatUsd(spend.estimatePerRunUsd)} until the worker reports cost in USD.
-              That reservation is released if the run fails, times out, or tracking is stopped, and it is replaced when the worker reports the actual cost.
-              Free test runs use sample data, cost {formatUsd(0)}, and are never blocked by the cap.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              onRefresh().catch(() => undefined);
-            }}
-            className="self-start rounded-full border border-body/15 px-4 py-2 font-sans text-xs font-semibold uppercase tracking-[0.12em] text-body/60 transition hover:border-coral hover:text-coral"
-          >
-            Refresh
-          </button>
-        </div>
-        <div className="mt-5 h-2 overflow-hidden rounded-full bg-body/10" aria-hidden="true">
-          <div className="h-full rounded-full bg-coral" style={{ width: `${usedPercent}%` }} />
-        </div>
-        {!spend.workerConfigured && (
-          <p className="mt-4 rounded-lg border border-body/10 bg-cream px-3 py-2 font-sans text-sm leading-relaxed text-body/70">
-            The audit worker is not on this stack yet. Deploy with FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG before starting a run.
-          </p>
-        )}
-      </div>
-
-      <div className="mt-8 grid gap-8 lg:grid-cols-[380px_minmax(0,1fr)]">
+      <div className="grid gap-8 lg:grid-cols-[380px_minmax(0,1fr)]">
         <form onSubmit={submit} className="rounded-lg border border-body/10 bg-cream p-6">
-          <h2 className="font-serif text-2xl font-bold text-body">New presence audit</h2>
+          <h2 className="font-serif text-2xl font-bold text-body">New report</h2>
           <p className="mt-2 font-sans text-sm leading-relaxed text-body/60">
             Company and an https website. Instagram, TikTok, and Facebook are optional. A PDF is ready to download only when the audit succeeds.
           </p>
+          {!spend.workerConfigured && (
+            <p className="mt-4 rounded-lg border border-body/10 bg-white px-3 py-2 font-sans text-sm leading-relaxed text-body/70">
+              The audit worker is not on this stack yet. Deploy with FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG before starting a run.
+            </p>
+          )}
           <div className="mt-7 grid gap-5">
             <TextField label="Company" value={company} onChange={setCompany} />
             <TextField label="Website" value={website} onChange={setWebsite} />
             <TextField label="Instagram" value={instagram} onChange={setInstagram} />
             <TextField label="TikTok" value={tiktok} onChange={setTiktok} />
-            <TextField label="Facebook" value={facebook} onChange={setFacebook} />
+            <TextField
+              label="Facebook"
+              value={facebook}
+              hint={FACEBOOK_FIELD_HINT}
+              error={facebookError}
+              onChange={(value) => {
+                setFacebook(value);
+                if (facebookError) setFacebookError(facebookFieldError(value) || "");
+              }}
+            />
             <TextField label="Legal name (optional)" value={legalName} onChange={setLegalName} />
             <TextField label="Area (optional)" value={area} onChange={setArea} />
             <label className="rounded-lg border border-coral/25 bg-white px-4 py-3">
@@ -1565,7 +1549,7 @@ function PresenceAudits({
                     On by default. The worker stays offline: sample data, no Apify, and no AI charge.
                     {realBlocked
                       ? " Real runs are switched off on this stack until FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true."
-                      : ` Turn this off to start a real audit, estimated at ${formatUsd(spend.estimatePerRunUsd)}.`}
+                      : " Turn this off to start a real audit."}
                   </span>
                 </span>
               </span>
@@ -1591,16 +1575,27 @@ function PresenceAudits({
         </form>
 
         <div className="overflow-hidden rounded-lg border border-body/10 bg-white">
-          <div className="border-b border-body/10 p-6">
-            <h2 className="font-serif text-2xl font-bold text-body">Runs</h2>
-            <p className="mt-2 font-sans text-sm text-body/60">
-              Status updates every few seconds while a run is queued or in progress.
-            </p>
+          <div className="flex flex-col gap-4 border-b border-body/10 p-6 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="font-serif text-2xl font-bold text-body">Runs</h2>
+              <p className="mt-2 font-sans text-sm text-body/60">
+                Status updates every few seconds while a run is queued or in progress. Cost appears when the run has finished.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                onRefresh().catch(() => undefined);
+              }}
+              className="self-start rounded-full border border-body/15 px-4 py-2 font-sans text-xs font-semibold uppercase tracking-[0.12em] text-body/60 transition hover:border-coral hover:text-coral"
+            >
+              Refresh
+            </button>
           </div>
           {runs.length === 0 ? (
             <div className="p-8 text-center">
-              <p className="font-serif text-2xl font-semibold text-body">No presence audits yet</p>
-              <p className="mt-2 font-sans text-sm text-body/60">Start with a free test run. It does not count towards the cap.</p>
+              <p className="font-serif text-2xl font-semibold text-body">No reports yet</p>
+              <p className="mt-2 font-sans text-sm text-body/60">Start with a free test run.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -1650,10 +1645,7 @@ function PresenceAudits({
                           <p className="max-w-[220px] font-sans text-xs leading-relaxed text-body/55">{run.statusMessage}</p>
                         </td>
                         <td className="px-4 py-4">
-                          <p className="font-sans text-sm font-semibold text-body">{presenceCostText(run)}</p>
-                          {run.costLabel !== "Free" && (
-                            <p className="mt-1 font-sans text-xs uppercase tracking-[0.12em] text-body/40">{run.costLabel}</p>
-                          )}
+                          <p className="font-sans text-sm font-semibold text-body">{presenceRunCostText(run)}</p>
                         </td>
                         <td className="px-4 py-4 font-sans text-sm text-body/60">{formatDate(run.createdAt)}</td>
                         <td className="px-6 py-4">
@@ -1708,17 +1700,6 @@ function presenceStatusClass(run: PresenceRun) {
   if (run.status === "failed" || run.status === "cancelled") return "bg-coral/10 text-coral";
   if (run.status === "running") return "bg-amber-100 text-amber-800";
   return "bg-body/10 text-body/55";
-}
-
-function presenceCostText(run: PresenceRun) {
-  if (run.costLabel === "Free") return "Free";
-  if (run.costLabel === "Actual" && typeof run.costUsd === "number") return formatUsd(run.costUsd);
-  if (run.costLabel === "Released") return formatUsd(0);
-  return formatUsd(run.estimatedCostUsd);
-}
-
-function formatUsd(amount: number) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
 }
 
 function BlogEditor({
@@ -2053,6 +2034,8 @@ function TextField({
   type = "text",
   min,
   max,
+  hint,
+  error,
   onChange,
 }: {
   label: string;
@@ -2060,6 +2043,8 @@ function TextField({
   type?: "text" | "number" | "password";
   min?: number;
   max?: number;
+  hint?: string;
+  error?: string;
   onChange: (value: string) => void;
 }) {
   return (
@@ -2071,8 +2056,19 @@ function TextField({
         max={max}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-2 block w-full rounded-lg border border-body/15 bg-white px-4 py-3 font-sans text-base text-body focus:border-coral focus:outline-none focus:ring-2 focus:ring-coral/20"
+        aria-invalid={error ? true : undefined}
+        className={`mt-2 block w-full rounded-lg border bg-white px-4 py-3 font-sans text-base text-body focus:outline-none focus:ring-2 ${
+          error
+            ? "border-coral focus:border-coral focus:ring-coral/20"
+            : "border-body/15 focus:border-coral focus:ring-coral/20"
+        }`}
       />
+      {hint && <p className="mt-2 font-sans text-xs leading-relaxed text-body/45">{hint}</p>}
+      {error && (
+        <p className="mt-2 font-sans text-xs leading-relaxed text-coral" role="alert">
+          {error}
+        </p>
+      )}
     </label>
   );
 }

@@ -17,7 +17,6 @@ export const PRESENCE_LOCK_SK = "LOCK";
 export const IN_PROGRESS_MESSAGE = "A run is already in progress.";
 export const RUNS_INDEX = "GSI1";
 export const RUNS_PARTITION = "RUNS";
-export const DEFAULT_MONTHLY_CAP_USD = 65;
 export const DEFAULT_RUN_ESTIMATE_USD = 6;
 export const DEFAULT_BRAND = "first_light";
 export const BRAND_IDS = ["first_light", "example_brand"] as const;
@@ -232,7 +231,8 @@ export function isPresenceAdminRoute(method: string, path: string) {
 }
 
 export function loadPresenceConfig(env: Record<string, string | undefined>): PresenceConfig {
-  const capUsd = readDecimal(env.AUDIT_MONTHLY_CAP_USD, DEFAULT_MONTHLY_CAP_USD, 0, 100_000);
+  // Unset, blank, 0, or unreadable means no monthly cap. A positive value turns the cap on.
+  const capUsd = readDecimal(env.AUDIT_MONTHLY_CAP_USD, 0, 0, 100_000);
   const estimateUsd = readDecimal(env.AUDIT_RUN_COST_ESTIMATE_USD, DEFAULT_RUN_ESTIMATE_USD, 0.01, 100_000);
   return {
     capUsd,
@@ -251,7 +251,7 @@ export function monthKey(date: Date) {
 }
 
 export function capBlocks(monthCents: number, reserveCents: number, capCents: number) {
-  if (reserveCents <= 0) return false;
+  if (capCents <= 0 || reserveCents <= 0) return false;
   return monthCents + reserveCents > capCents;
 }
 
@@ -730,9 +730,12 @@ async function createRun(input: PresenceRequest, now: Date, requestedBy: string,
   await settleStaleRuns(input, now);
   if (await runInProgress(input, now)) throw new PresenceError(409, IN_PROGRESS_MESSAGE);
 
-  const reserveCents = requested.testMode ? 0 : input.config.estimateCents;
+  const capOn = input.config.capCents > 0;
+  const reserveCents = requested.testMode || !capOn ? 0 : input.config.estimateCents;
   const spent = await input.store.monthSpendCents(month);
-  if (capBlocks(spent, reserveCents, input.config.capCents)) throw new PresenceError(409, capMessage(input.config, spent));
+  if (capOn && capBlocks(spent, reserveCents, input.config.capCents)) {
+    throw new PresenceError(409, capMessage(input.config, spent));
+  }
 
   const run: PresenceRun = {
     id,

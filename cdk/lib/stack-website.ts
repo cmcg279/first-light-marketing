@@ -658,7 +658,7 @@ const auditWorkerAsyncInvoke = {
 };
 
 function addPresenceAudit(stack: cdk.Stack, props: PresenceAuditProps) {
-  const capUsd = moneySetting(stack, "FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD", "auditMonthlyCapUsd", 65, 0);
+  const capUsd = moneySetting(stack, "FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD", "auditMonthlyCapUsd", 0, 0);
   const estimateUsd = moneySetting(
     stack,
     "FIRST_LIGHT_AUDIT_RUN_COST_ESTIMATE_USD",
@@ -922,6 +922,7 @@ function addLambdaErrorAlarm(stack: cdk.Stack, id: string, fn: lambda.Function, 
 }
 
 function addMonthlyBudget(stack: cdk.Stack, stage: string, amountUsd: number, alertEmail: string) {
+  // Existing account-spend alert. The portal does not refuse a run when this budget is crossed.
   // This account's Budgets API only accepts USD. $65 / $13 is about £50 / £10.
   const subscribers = [{ subscriptionType: "EMAIL", address: alertEmail }];
   new budgets.CfnBudget(stack, "MonthlyBudget", {

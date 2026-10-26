@@ -74,13 +74,16 @@ export FIRST_LIGHT_AUDIT_RUNNER_TOKEN="the-existing-runner-token"  # required on
 
 ### Online presence audits (optional)
 
-Leave these unset for a normal production deploy. The audit worker, its role, and the social-audit JSON secret are created only when an image tag is set. Without that tag the stack does not gain a Lambda. The table, buckets, and user pool are not replaced. The existing table does gain `GSI1` (`GSI1PK` / `GSI1SK`) so presence runs can be listed without a scan. That index update is in place. The table does not gain a TTL attribute. The presence-audit lock is one item, and the next conditional put treats it as free once `expiresAt` is in the past, so DynamoDB TTL is not required. Leaving TTL off keeps that change out of the production diff, including a deploy with no worker image. AdminFn also gains the USD cap settings below.
+Leave these unset for a normal production deploy. The audit worker, its role, and the social-audit JSON secret are created only when an image tag is set. Without that tag the stack does not gain a Lambda. The table, buckets, and user pool are not replaced. The existing table does gain `GSI1` (`GSI1PK` / `GSI1SK`) so presence runs can be listed without a scan. That index update is in place. The table does not gain a TTL attribute. The presence-audit lock is one item, and the next conditional put treats it as free once `expiresAt` is in the past, so DynamoDB TTL is not required. Leaving TTL off keeps that change out of the production diff, including a deploy with no worker image.
+
+Production does not set a monthly cap, so the portal does not reserve money or refuse a run for spend. `FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD` unset or `0` is that mode, and it is the CDK default (`AUDIT_MONTHLY_CAP_USD=0` on AdminFn). Each finished run still stores the worker's `cost_usd`. Dev can export a positive cap when a stack should refuse a real run that would pass it. The one-run lock and the reserved-concurrency setting are unchanged. Account spend is watched by the existing AWS Budget alert (see Alarms and budgets), not by stopping runs in Reports.
 
 ```bash
 export FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG=""          # empty skips the worker
 export FIRST_LIGHT_AUDIT_WORKER_IMAGE_REPO="first-light-audit-worker"
-export FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD="65"         # real runs only, compared with cost_usd
-export FIRST_LIGHT_AUDIT_RUN_COST_ESTIMATE_USD="6"    # released on failure, timeout, or cancel; replaced by cost_usd
+# Leave the monthly cap unset in production. Dev may set a positive amount, for example 65.
+# export FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD="65"
+export FIRST_LIGHT_AUDIT_RUN_COST_ESTIMATE_USD="6"    # used only when a cap above 0 is set
 # Leave reserved concurrency unset. See AUDIT_REPORTS.md.
 ```
 
@@ -247,7 +250,7 @@ Read the diff before approving anything. All of the following must be true:
 - `AWS::Cognito::UserPoolDomain` (`AdminUserPoolDomain`) shows no change. The domain prefix is the same.
 - `AWS::Cognito::UserPoolClient` shows no change. Callback URLs, logout URLs, and the client id stay as they are. If the diff adds or removes a URL, fix the environment variables above and run the diff again. Do not deploy a client change in phase 1.
 - The DynamoDB table, site bucket, media bucket, audit-report bucket, and user pool are not replaced. A replacement shows the resource being destroyed and created again.
-- With `FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG` unset, there is no `AuditWorkerFn`, no `SocialAuditSecret`, and no new bucket. AdminFn may show new environment variables for the USD presence-audit cap (`AUDIT_MONTHLY_CAP_USD` default 65, `AUDIT_RUN_COST_ESTIMATE_USD` default 6). The existing table may gain `GSI1`. That is an in-place index update, not a new table and not a replacement. The table should not gain `TimeToLiveSpecification`. The presence lock does not use DynamoDB TTL.
+- With `FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG` unset, there is no `AuditWorkerFn`, no `SocialAuditSecret`, and no new bucket. AdminFn may show `AUDIT_MONTHLY_CAP_USD` as `0` (no portal cap, no per-run reservation) and `AUDIT_RUN_COST_ESTIMATE_USD` as `6` (used only if a later deploy sets the cap above 0). The existing table may gain `GSI1`. That is an in-place index update, not a new table and not a replacement. The table should not gain `TimeToLiveSpecification`. The presence lock does not use DynamoDB TTL.
 
 Phase 1 may still change Lambda code, function URL auth, the distribution, headers, and alarms. Those are in place. Phase 2's diff should be the user pool MFA setting moving from optional to required, and nothing else.
 
@@ -344,7 +347,7 @@ CloudTrail is not in the stack. The first management-event trail in an account i
 
 Two standard CloudWatch alarms per stack (Lambda errors, five-minute period). The first ten alarms in an account are free; after that each is about $0.10/month. SNS email to confirm the alarm is inside the free tier at this volume.
 
-The first two AWS Budgets in an account are free. Each budget after that is about $0.02/day. Dev plus production is two budgets. This account only accepts USD, so production is $65/month and dev is $13/month (about £50 and £10), filtered to the `FirstLightStage` tag. Alerts fire on actual spend at 80% and 100%, and on the forecast at 100%.
+The first two AWS Budgets in an account are free. Each budget after that is about $0.02/day. Dev plus production is two budgets. This account only accepts USD, so production is $65/month and dev is $13/month (about £50 and £10), filtered to the `FirstLightStage` tag. Alerts fire on actual spend at 80% and 100%, and on the forecast at 100%. That email is how spend is watched. The Reports tab does not stop a run when the budget is crossed. The portal cap stays off unless `FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD` is set above 0.
 
 ## Production resources this change must not replace
 

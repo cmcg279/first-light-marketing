@@ -32,13 +32,16 @@ const NOW = new Date("2026-10-24T18:30:00.000Z");
 const RUN = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 
 describe("presence audit config", () => {
-  it("defaults to a $65 cap, a $6 estimate, test mode, and no worker", () => {
+  it("leaves the monthly cap off when it is unset, and keeps a $6 estimate, test mode, and no worker", () => {
     const config = loadPresenceConfig({});
-    assert.equal(config.capUsd, 65);
+    assert.equal(config.capUsd, 0);
+    assert.equal(config.capCents, 0);
     assert.equal(config.estimateUsd, 6);
     assert.equal(config.realRunsEnabled, false);
     assert.equal(config.defaultTestMode, true);
     assert.equal(config.workerConfigured, false);
+    assert.equal(loadPresenceConfig({ AUDIT_MONTHLY_CAP_USD: "0" }).capUsd, 0);
+    assert.equal(loadPresenceConfig({ AUDIT_MONTHLY_CAP_USD: "65" }).capUsd, 65);
   });
 
   it("ignores malformed money and only enables real runs for the exact string true", () => {
@@ -50,7 +53,7 @@ describe("presence audit config", () => {
       AUDIT_WORKER_FUNCTION_NAME: "audit-worker",
       AUDIT_REPORTS_BUCKET_NAME: "reports",
     });
-    assert.equal(config.capUsd, 65);
+    assert.equal(config.capUsd, 0);
     assert.equal(config.estimateUsd, 6);
     assert.equal(config.realRunsEnabled, false);
     assert.equal(config.defaultTestMode, false);
@@ -322,6 +325,39 @@ describe("presence audit API", () => {
     assert.equal(body.run.costLabel, "Estimated");
     assert.match(body.run.id, /^[0-9A-HJKMNP-TV-Z]{26}$/);
     assert.equal(await store.monthSpendCents("2026-10"), 600);
+  });
+
+  it("starts real runs when the monthly cap is off and still records cost_usd", async () => {
+    const store = memoryStore();
+    const config = testConfig({ realRunsEnabled: true, capUsd: 0, estimateUsd: 6 });
+    const first = await postRun(store, { ...validBody(), testMode: false }, config);
+    assert.equal(first.statusCode, 200);
+    const started = (first.body as { run: { id: string; estimatedCostUsd: number } }).run;
+    assert.equal(started.estimatedCostUsd, 0);
+    assert.equal(await store.monthSpendCents("2026-10"), 0);
+    const stored = await store.getRun(started.id);
+    assert.ok(stored);
+    store.objects.set(resultObjectKey(stored), {
+      status: "succeeded",
+      cost_usd: { total: 1.25 },
+      quality_gate: { passed: true, failures: [] },
+      artifacts: { pdf: pdfObjectKey(stored) },
+    });
+    const read = await handlePresenceRequest({
+      method: "GET",
+      path: `/api/admin/presence/runs/${started.id}`,
+      config,
+      now: NOW,
+      authorize: allow,
+      store,
+    });
+    assert.equal(read.statusCode, 200);
+    const recorded = (read.body as { run: { costUsd?: number; status: string } }).run;
+    assert.equal(recorded.status, "succeeded");
+    assert.equal(recorded.costUsd, 1.25);
+    const second = await postRun(store, { ...validBody(), company: "Second Co", testMode: false }, config);
+    assert.equal(second.statusCode, 200);
+    assert.equal(await store.monthSpendCents("2026-10"), 125);
   });
 
   it("blocks a real run past the cap and still allows a free test", async () => {
