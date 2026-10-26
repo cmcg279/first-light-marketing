@@ -15,6 +15,7 @@ function finishedRun(costUsd: number): PresenceRun {
     handles: { facebook: "VPJebb" },
     business: "",
     area: "Belfast",
+    googleMaps: "",
     brand: "first_light",
     requestedBy: "admin:test",
     testMode: false,

@@ -21,7 +21,7 @@ Top-level keys only: `schema`, `run_id`, `business_id`, `requested_by`, `kind`, 
 | `website` | Required `https://` URL. No credentials, no IP address, no `localhost`, no host without a dot, no `.local` / `.internal` / `.localhost`, port empty or 443, length at most 300 |
 | `handles` | Optional `instagram`, `tiktok`, and `facebook` only. LinkedIn, YouTube, and X are rejected. Facebook is a page URL such as `https://www.facebook.com/VPJebb`, or the name from that URL. Surrounding spaces, tabs, and newlines are trimmed. A space that remains, or an invisible character (U+200B–U+200D, U+2060, U+180E, U+FEFF), is rejected by the Reports form before submit, and the API returns 422 with the same message |
 | `brand` | `first_light`. `BRAND_IDS` in `api/presence-audit.ts` (`first_light`, `example_brand`) must stay the same as the `brands:` entries in the worker's `social_audit/brands.yaml` |
-| `options` | Optional legal name (`business`, ≤200), area (`competitors.area`, ≤60), and on retry `compare_to_run_id` of the previous run |
+| `options` | Optional legal name (`business`, ≤200), area (`competitors.area`, ≤60), Google Maps link or place ID (`google_maps`, ≤500), and on retry `compare_to_run_id` of the previous run. `google_maps` is omitted when the field is blank. The site checks the host and the shape only and does not fetch the link. The worker rejects unknown option keys, so it must already accept `google_maps` before a run sends one |
 | `test_mode` | The free-test checkbox |
 
 `run_id` is always a valid ULID and `business_id` is always a valid slug, so a worker-side `bad_input` still writes the status row. The invoke is asynchronous (`InvocationType` `Event`). AdminFn reads the status code, `FunctionError`, and any body. An empty event body is normal. A `bad_input` or failed body is applied immediately. A non-202 result marks the run failed and releases its reservation. A run that stays queued or running for more than 16 minutes is marked failed with `timeout` and its reservation is released.
@@ -74,14 +74,14 @@ The month counter is a separate item, `PK=PRESENCE_SPEND`, `SK=MONTH#YYYY-MM`, a
 | `runs/<business_id>/<run_id>/report.pdf` | Succeeded and needs-review runs |
 | `runs/<business_id>/<run_id>/snapshot.json` | History for the next comparison |
 
-A PDF on its own does not complete a run. Download is offered only when the status is `succeeded` and that exact PDF key exists. `needs_review` is not labelled Completed and is not downloadable.
+A PDF on its own does not complete a run. Download is offered when the status is `succeeded` or `needs_review` and that exact PDF key exists. `needs_review` is not labelled Completed. The Reports row shows an amber banner, "Needs review - check before sending to a client", then the readiness message and the raw `qualityFailures` check codes. The button is labelled "Download (needs review)". There is no extra confirm dialog. `failed`, `cancelled`, `queued`, and `running` stay unavailable.
 
 ### States
 
 | Worker status | What the tab shows |
 | --- | --- |
 | `succeeded` | Completed. Download is available once the PDF is there |
-| `needs_review` | Needs review. Includes `quality_gate.failures` such as `too_many_pages` (more than 35 pages). Not a completed report |
+| `needs_review` | Needs review. Includes `quality_gate.failures` such as `too_many_pages` (more than 35 pages). Not a completed report. The PDF can be downloaded, with the amber banner above |
 | `failed` | Failed. `website_unreachable`, `bad_input`, `timeout`, `internal` |
 | `cancelled` | Cancelled. Includes `social_required` |
 | `running` / `queued` | Running or Queued, until the 16-minute limit |
@@ -127,7 +127,7 @@ All of these use the same Cognito check as the other admin routes.
 | `POST` | `/api/admin/presence/runs` | Create a run and invoke the worker |
 | `GET` | `/api/admin/presence/runs` | List runs from `GSI1`. The response still includes the month counter; Reports does not show it |
 | `GET` | `/api/admin/presence/runs/{id}` | One run, refreshed from the status row and `result.json` |
-| `POST` | `/api/admin/presence/runs/{id}/download` | Presigned PDF URL, 5 minutes, succeeded runs only |
+| `POST` | `/api/admin/presence/runs/{id}/download` | Presigned PDF URL, 5 minutes, for `succeeded` and `needs_review` runs whose PDF key matches and the object exists. Other statuses, a mismatched key, or a missing object return 409 |
 | `POST` | `/api/admin/presence/runs/{id}/cancel` | Stop tracking and release the reservation. The one-run lock stays until a terminal result or 16 minutes |
 | `POST` | `/api/admin/presence/runs/{id}/retry` | New run for a failed, cancelled, or needs-review audit |
 

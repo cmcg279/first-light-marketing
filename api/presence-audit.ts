@@ -49,6 +49,7 @@ const REQUEST_KEYS = new Set([
   "handles",
   "business",
   "area",
+  "googleMaps",
   "testMode",
   "test_mode",
   "compareToRunId",
@@ -56,6 +57,11 @@ const REQUEST_KEYS = new Set([
   "businessId",
   "business_id",
 ]);
+const PDF_STATUSES = new Set<string>(["succeeded", "needs_review"]);
+const PLACE_ID = /^[A-Za-z0-9_-]{10,300}$/;
+const COUNTRY_CODE = /^[a-z]{2}$/;
+const GOOGLE_MAPS_MESSAGE =
+  "Google Maps link must be an https Google Maps URL (google.com/maps, a Google country /maps URL, maps.google.com, maps.app.goo.gl, or goo.gl/maps) or a place ID.";
 const FAILURE_TEXT: Record<string, string> = {
   website_not_fetched: "The website was not fetched.",
   listing_match_not_high: "The Google listing match was not high enough.",
@@ -122,6 +128,7 @@ export interface PresenceRun {
   handles: PresenceHandles;
   business: string;
   area: string;
+  googleMaps: string;
   brand: string;
   requestedBy: string;
   compareToRunId?: string;
@@ -356,6 +363,7 @@ export function validateJob(event: unknown): WorkerJob {
       "budget_usd",
       "force_fresh",
       "compare_to_run_id",
+      "google_maps",
     ]),
     "options",
   );
@@ -401,6 +409,7 @@ export function workerPayload(run: PresenceRun): WorkerJob {
       ...(run.business ? { business: run.business } : {}),
       ...(run.area ? { competitors: { area: run.area } } : {}),
       ...(run.compareToRunId ? { compare_to_run_id: run.compareToRunId } : {}),
+      ...(run.googleMaps ? { google_maps: run.googleMaps } : {}),
     },
     test_mode: run.testMode,
   });
@@ -507,6 +516,7 @@ export function runFromItem(item: Record<string, unknown>): PresenceRun | null {
     },
     business: text(options.business),
     area: text(competitors.area),
+    googleMaps: typeof options.google_maps === "string" ? options.google_maps : "",
     brand: text(job.brand) || DEFAULT_BRAND,
     requestedBy: text(item.requested_by) || "admin",
     compareToRunId: typeof options.compare_to_run_id === "string" ? options.compare_to_run_id : undefined,
@@ -606,10 +616,12 @@ export function publicRun(run: PresenceRun) {
     handles,
     business: run.business,
     area: run.area,
+    googleMaps: run.googleMaps,
     testMode: run.testMode,
     status: run.status,
     statusLabel: statusLabel(run.status, notTracked),
     completed: run.status === "succeeded",
+    needsReview: run.status === "needs_review",
     errorCode: notTracked ? "tracking_stopped" : run.errorCode,
     errorMessage: notTracked ? TRACKING_STOPPED : run.errorMessage,
     qualityFailures: run.qualityFailures,
@@ -622,7 +634,7 @@ export function publicRun(run: PresenceRun) {
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     finishedAt: run.finishedAt,
-    downloadReady: run.status === "succeeded" && run.pdfKey === pdfObjectKey(run),
+    downloadReady: PDF_STATUSES.has(run.status) && run.pdfKey === pdfObjectKey(run),
   };
 }
 
@@ -742,6 +754,7 @@ async function createRun(input: PresenceRequest, now: Date, requestedBy: string,
     handles: requested.handles,
     business: requested.business,
     area: requested.area,
+    googleMaps: requested.googleMaps,
     brand: DEFAULT_BRAND,
     requestedBy: requestedBy.slice(0, 200),
     compareToRunId: previous ? previous.id : requested.compareToRunId,
@@ -782,7 +795,7 @@ async function createRun(input: PresenceRequest, now: Date, requestedBy: string,
 
 async function downloadRun(input: PresenceRequest, id: string, now: Date) {
   const run = await refreshRun(input, await requireRun(input, id), now, true);
-  if (run.status !== "succeeded" || run.pdfKey !== pdfObjectKey(run)) {
+  if (!PDF_STATUSES.has(run.status) || run.pdfKey !== pdfObjectKey(run)) {
     throw new PresenceError(409, "The report is not ready to download yet.");
   }
   if (!(await input.store.pdfExists(run.pdfKey))) {
@@ -986,6 +999,7 @@ interface ParsedRun {
   handles: PresenceHandles;
   business: string;
   area: string;
+  googleMaps: string;
   businessId: string;
   testMode: boolean;
   compareToRunId?: string;
@@ -1001,6 +1015,7 @@ function parseRunInput(rawBody: string | undefined, config: PresenceConfig): Par
   const handles = parseHandles(body.handles);
   const business = body.business === undefined || body.business === null || body.business === "" ? "" : requiredBounded(body.business, "Legal name", 200);
   const area = body.area === undefined || body.area === null || body.area === "" ? "" : requiredBounded(body.area, "Area", 60);
+  const googleMaps = body.googleMaps === undefined || body.googleMaps === null ? "" : checkGoogleMaps(body.googleMaps);
   const testMode =
     body.testMode === undefined && body.test_mode === undefined
       ? config.defaultTestMode
@@ -1012,7 +1027,7 @@ function parseRunInput(rawBody: string | undefined, config: PresenceConfig): Par
     businessRaw === undefined || businessRaw === null || businessRaw === ""
       ? slugifyBusinessId(company)
       : requiredSlug(businessRaw);
-  return { company, website, handles, business, area, businessId, testMode, compareToRunId };
+  return { company, website, handles, business, area, googleMaps, businessId, testMode, compareToRunId };
 }
 
 function requestFromRun(run: PresenceRun): ParsedRun {
@@ -1022,6 +1037,7 @@ function requestFromRun(run: PresenceRun): ParsedRun {
     handles: run.handles,
     business: run.business,
     area: run.area,
+    googleMaps: run.googleMaps,
     businessId: run.businessId,
     testMode: run.testMode,
     compareToRunId: run.id,
@@ -1101,6 +1117,77 @@ function isIpAddress(host: string) {
   return parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
 }
 
+/**
+ * Host and shape only. This must not fetch, HEAD, or follow the link.
+ * `google_maps` is passed through to the worker, which resolves short links itself.
+ */
+function checkGoogleMaps(value: unknown): string {
+  if (typeof value !== "string") fail(GOOGLE_MAPS_MESSAGE);
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.length > 500) fail("Google Maps link must be at most 500 characters.");
+  if (!looksLikeUrl(trimmed)) {
+    if (PLACE_ID.test(trimmed)) return trimmed;
+    fail(GOOGLE_MAPS_MESSAGE);
+  }
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    fail(GOOGLE_MAPS_MESSAGE);
+  }
+  if (url.protocol !== "https:") fail("Google Maps link must use https.");
+  if (url.username || url.password) fail("Google Maps link must not include a username or password.");
+  if (url.port || explicitPort(trimmed)) fail("Google Maps link must not include a port.");
+  const host = url.hostname.toLowerCase().replace(/\.$/, "").replace(/^\[|\]$/g, "");
+  if (isIpAddress(host)) fail("Google Maps link must be a Google host, not an IP address.");
+  if (!googleMapsHostAllowed(host, url.pathname)) fail(GOOGLE_MAPS_MESSAGE);
+  return trimmed;
+}
+
+function looksLikeUrl(value: string) {
+  return value.includes("://") || value.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(value);
+}
+
+function explicitPort(value: string) {
+  const match = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(value);
+  if (!match) return false;
+  let authority = match[1] || "";
+  const at = authority.lastIndexOf("@");
+  if (at >= 0) authority = authority.slice(at + 1);
+  if (authority.startsWith("[")) {
+    const end = authority.indexOf("]");
+    return end >= 0 && authority.slice(end + 1).startsWith(":");
+  }
+  return authority.includes(":");
+}
+
+function googleMapsHostAllowed(host: string, pathname: string) {
+  if (host === "maps.google.com" || host === "maps.app.goo.gl") return true;
+  if (host === "goo.gl") return pathname.startsWith("/maps");
+  if (host === "google.com" || host === "www.google.com" || isGoogleCountryHost(host)) {
+    return pathname.startsWith("/maps");
+  }
+  return false;
+}
+
+function isGoogleCountryHost(host: string) {
+  const labels = host.split(".");
+  if (labels.some((label) => !/^[a-z]+$/.test(label))) return false;
+  const body = labels[0] === "www" ? labels.slice(1) : labels;
+  if (body[0] !== "google") return false;
+  const suffix = body.slice(1);
+  if (suffix.length === 1 && COUNTRY_CODE.test(suffix[0])) return true;
+  if (suffix.length === 2 && suffix[0] === "co" && COUNTRY_CODE.test(suffix[1])) return true;
+  if (suffix.length === 2 && suffix[0] === "com" && COUNTRY_CODE.test(suffix[1])) return true;
+  return false;
+}
+
+function googleMapsOption(options: Record<string, unknown>) {
+  if (!("google_maps" in options) || options.google_maps === undefined || options.google_maps === null) return "";
+  return checkGoogleMaps(options.google_maps);
+}
+
 function checkOptions(options: Record<string, unknown>) {
   optionalNumber(options, "max_posts", 12, 60, "options", true);
   optionalBool(options, "require_social", "options", false);
@@ -1148,6 +1235,7 @@ function checkOptions(options: Record<string, unknown>) {
   optionalNumber(budget, "reviews", 0, 0.3, "options.budget_usd", false);
   optionalNumber(budget, "competitors", 0, 1, "options.budget_usd", false);
   optionalNumber(budget, "ai", 0, 0.2, "options.budget_usd", false);
+  googleMapsOption(options);
 }
 
 function normalOptions(options: Record<string, unknown>, compareTo: string | null) {
@@ -1155,6 +1243,7 @@ function normalOptions(options: Record<string, unknown>, compareTo: string | nul
   const reviews = (options.reviews || {}) as Record<string, unknown>;
   const ai = (options.ai || {}) as Record<string, unknown>;
   const budget = (options.budget_usd || {}) as Record<string, unknown>;
+  const googleMaps = googleMapsOption(options);
   return {
     business: optionalString(options, "business", 200, "options"),
     no_social: Boolean(optionalBool(options, "no_social", "options", false)),
@@ -1187,6 +1276,7 @@ function normalOptions(options: Record<string, unknown>, compareTo: string | nul
       competitors: optionalNumber(budget, "competitors", 0, 1, "options.budget_usd", false),
       ai: optionalNumber(budget, "ai", 0, 0.2, "options.budget_usd", false),
     },
+    ...(googleMaps ? { google_maps: googleMaps } : {}),
   };
 }
 

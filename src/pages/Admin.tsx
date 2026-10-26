@@ -1480,6 +1480,7 @@ function PresenceAudits({
   const [facebookError, setFacebookError] = useState("");
   const [legalName, setLegalName] = useState("");
   const [area, setArea] = useState("");
+  const [googleMaps, setGoogleMaps] = useState("");
   const [testMode, setTestMode] = useState(spend.defaultTestMode);
   const [testModeTouched, setTestModeTouched] = useState(false);
 
@@ -1514,6 +1515,7 @@ function PresenceAudits({
       ...(Object.keys(handles).length > 0 ? { handles } : {}),
       ...(legalName.trim() ? { business: legalName.trim() } : {}),
       ...(area.trim() ? { area: area.trim() } : {}),
+      ...(googleMaps.trim() ? { googleMaps: googleMaps.trim() } : {}),
       testMode,
     }).catch(() => undefined);
   }
@@ -1524,7 +1526,7 @@ function PresenceAudits({
         <form onSubmit={submit} className="rounded-lg border border-body/10 bg-cream p-6">
           <h2 className="font-serif text-2xl font-bold text-body">New report</h2>
           <p className="mt-2 font-sans text-sm leading-relaxed text-body/60">
-            Company and an https website. Instagram, TikTok, and Facebook are optional. A PDF is ready to download only when the report succeeds.
+            Company and an https website. Instagram, TikTok, and Facebook are optional. A PDF can be downloaded when the report succeeds or needs review. Check a needs-review PDF before sending it to a client.
           </p>
           {!spend.workerConfigured && (
             <p className="mt-4 rounded-lg border border-body/10 bg-white px-3 py-2 font-sans text-sm leading-relaxed text-body/70">
@@ -1548,6 +1550,12 @@ function PresenceAudits({
             />
             <TextField label="Legal name (optional)" value={legalName} onChange={setLegalName} />
             <TextField label="Area (optional)" value={area} onChange={setArea} />
+            <TextField
+              label="Google Maps link or place ID (optional)"
+              value={googleMaps}
+              hint="Helps match the right Google listing, especially for businesses with no website."
+              onChange={setGoogleMaps}
+            />
             <label className="rounded-lg border border-coral/25 bg-white px-4 py-3">
               <span className="flex items-start gap-3">
                 <input
@@ -1629,6 +1637,7 @@ function PresenceAudits({
                 <tbody>
                   {runs.map((run) => {
                     const handleLine = [run.handles.instagram, run.handles.tiktok, run.handles.facebook].filter(Boolean).join(" · ");
+                    const mapsHref = googleMapsHref(run.googleMaps);
                     const open = (run.status === "queued" || run.status === "running") && !run.trackingStopped;
                     const canRetry = run.status === "failed" || run.status === "cancelled" || run.status === "needs_review";
                     return (
@@ -1643,6 +1652,19 @@ function PresenceAudits({
                           >
                             {run.website}
                           </a>
+                          {run.googleMaps && mapsHref && (
+                            <a
+                              href={mapsHref}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              className="mt-1 block max-w-[220px] truncate font-sans text-xs text-body/50 underline-offset-2 hover:text-coral hover:underline"
+                            >
+                              {run.googleMaps}
+                            </a>
+                          )}
+                          {run.googleMaps && !mapsHref && (
+                            <p className="mt-1 max-w-[220px] truncate font-sans text-xs text-body/45">{run.googleMaps}</p>
+                          )}
                           {handleLine && (
                             <p className="mt-1 max-w-[220px] truncate font-sans text-xs text-body/45">{handleLine}</p>
                           )}
@@ -1658,7 +1680,21 @@ function PresenceAudits({
                           )}
                         </td>
                         <td className="px-4 py-4">
-                          <p className="max-w-[220px] font-sans text-xs leading-relaxed text-body/55">{run.statusMessage}</p>
+                          {run.needsReview ? (
+                            <div className="max-w-[260px] rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+                              <p className="font-sans text-xs font-semibold leading-relaxed text-amber-950">
+                                Needs review - check before sending to a client
+                              </p>
+                              <p className="mt-1 font-sans text-xs leading-relaxed text-amber-950/80">{run.statusMessage}</p>
+                              {run.qualityFailures.length > 0 && (
+                                <p className="mt-1 break-words font-sans text-xs leading-relaxed text-amber-950/70">
+                                  {run.qualityFailures.join(", ")}
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="max-w-[220px] font-sans text-xs leading-relaxed text-body/55">{run.statusMessage}</p>
+                          )}
                         </td>
                         <td className="px-4 py-4">
                           <p className="font-sans text-sm font-semibold text-body">{presenceRunCostText(run)}</p>
@@ -1672,7 +1708,7 @@ function PresenceAudits({
                               disabled={!run.downloadReady || saving}
                               className="rounded-full border border-body/15 px-3 py-2 font-sans text-xs font-semibold uppercase tracking-[0.12em] text-body/60 transition hover:border-coral hover:text-coral disabled:cursor-not-allowed disabled:opacity-40"
                             >
-                              Download
+                              {run.needsReview ? "Download (needs review)" : "Download"}
                             </button>
                             {open && (
                               <button
@@ -1707,6 +1743,17 @@ function PresenceAudits({
       </div>
     </div>
   );
+}
+
+function googleMapsHref(value: string) {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return "";
+    return url.href;
+  } catch {
+    return "";
+  }
 }
 
 function presenceStatusClass(run: PresenceRun) {

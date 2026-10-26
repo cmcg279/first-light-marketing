@@ -89,6 +89,8 @@ export FIRST_LIGHT_AUDIT_RUN_COST_ESTIMATE_USD="6"    # used only when a cap abo
 
 Do not export `FIRST_LIGHT_AUDIT_WORKER_ALLOW_REAL=true` until a dev test run has been checked. Real mode is off unless that value is exactly `true`. While it is off, the worker gets `SOCIAL_AUDIT_TEST_MODE=1`. Dev and production both default the worker to free test mode. The full build, push, and dev test steps are in [AUDIT_REPORTS.md](AUDIT_REPORTS.md). Do not put an Apify token or an AI key in the environment. The worker secret is one JSON object (`APIFY_TOKEN`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) created with `GenerateSecretString` when the image tag is set. A later stack update does not reset values entered in Secrets Manager unless that generate block changes. Production retains the secret.
 
+The Reports form can send `options.google_maps` (an https Google Maps URL, a `maps.app.goo.gl` or `goo.gl/maps` short link, or a place ID). The worker rejects unknown option keys. Ship the worker change that accepts `options.google_maps` first, or in the same release as this site. Until that worker is live, leave the Google Maps field blank. The site does not fetch, HEAD, or follow the link. Downloading a `needs_review` PDF does not depend on that worker change.
+
 This account's Lambda concurrent-executions quota is 10. Lambda keeps 10 unreserved, so `ReservedConcurrentExecutions: 1` fails the deploy with "decreases account's UnreservedConcurrentExecution below its minimum value of [10]". The same failure would hit production. `FIRST_LIGHT_AUDIT_WORKER_RESERVED_CONCURRENCY` therefore defaults to unset. `none` and `unset` do the same. A value of `0` is also off: it does not reserve zero executions, and the property is omitted. The function is created with no reserved concurrency. After the quota is raised to 100 or more, turn it back on and redeploy:
 
 ```bash
@@ -105,6 +107,8 @@ export FIRST_LIGHT_LAMBDA_RUNTIME="nodejs20.x"     # later deploy only: nodejs24
 ```
 
 ## Safe order
+
+Presence reports that include a Google Maps link depend on the worker accepting `options.google_maps`. Deploy that worker image before this site sends the field. Until then, leave the Google Maps field on the Reports form blank. A filled-in link against a worker that does not know the key fails the job. `needs_review` PDF download is site-only and can ship with this change.
 
 1. Deploy dev and run the tests in the next section, including the MFA enrolment test.
 2. Back up the production DynamoDB table. Point-in-time recovery is already on. Take an on-demand backup as well. The table name is the `TableName` output of `FirstLight`, or:
