@@ -1136,8 +1136,10 @@ function isIpAddress(host: string) {
 /**
  * Host and shape only. This must not fetch, HEAD, or follow the link.
  * Rules match the worker's parse_maps_input (Report-Generator-FLM#24 at ca840b8).
- * The character test runs on the raw trimmed string before new URL(). The host is
- * lowercased and is not stripped of a trailing dot.
+ * The character class, scheme, authority, and path are checked on the raw trimmed
+ * string. new URL() is not used: it would rewrite slash counts, percent-encoding,
+ * and dot segments, and the worker checks the raw text that this site sends.
+ * The host is the lowercased raw authority, with no trailing-dot stripping.
  */
 function checkGoogleMaps(value: unknown): string {
   if (typeof value !== "string") fail(GOOGLE_MAPS_MESSAGE);
@@ -1149,18 +1151,17 @@ function checkGoogleMaps(value: unknown): string {
     if (PLACE_ID.test(trimmed) || MAPS_CID.test(trimmed)) return trimmed;
     fail(GOOGLE_MAPS_MESSAGE);
   }
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    fail(GOOGLE_MAPS_MESSAGE);
-  }
-  if (url.protocol !== "https:") fail("Google Maps link must use https.");
-  if (url.username || url.password) fail("Google Maps link must not include a username or password.");
-  if (url.port || explicitPort(trimmed)) fail("Google Maps link must not include a port.");
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (isIpAddress(host)) fail("Google Maps link must be a Google host, not an IP address.");
-  if (!googleMapsHostAllowed(host, url.pathname)) fail(GOOGLE_MAPS_MESSAGE);
+  // Exactly two slashes after https:, then a non-delimiter authority character.
+  if (!trimmed.startsWith("https://")) fail("Google Maps link must use https.");
+  if (!/^https:\/\/[^/?#\\]/.test(trimmed)) fail(GOOGLE_MAPS_MESSAGE);
+  const authority = mapsAuthority(trimmed);
+  if (authority.includes("@")) fail("Google Maps link must not include a username or password.");
+  if (authority.includes("%")) fail(GOOGLE_MAPS_MESSAGE);
+  const host = mapsHost(authority);
+  if (host === null) fail("Google Maps link must not include a port.");
+  const normalized = host.toLowerCase();
+  if (isIpAddress(normalized)) fail("Google Maps link must be a Google host, not an IP address.");
+  if (!googleMapsHostAllowed(normalized, mapsRawPath(trimmed, authority))) fail(GOOGLE_MAPS_MESSAGE);
   return trimmed;
 }
 
@@ -1168,17 +1169,30 @@ function looksLikeUrl(value: string) {
   return value.includes("://") || value.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(value);
 }
 
-function explicitPort(value: string) {
-  const match = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(value);
-  if (!match) return false;
-  let authority = match[1] || "";
-  const at = authority.lastIndexOf("@");
-  if (at >= 0) authority = authority.slice(at + 1);
+function mapsAuthority(value: string) {
+  const rest = value.slice("https://".length);
+  const cut = rest.search(/[/?#]/);
+  return cut === -1 ? rest : rest.slice(0, cut);
+}
+
+/** Host from the raw authority. Null means an explicit port is present. */
+function mapsHost(authority: string): string | null {
   if (authority.startsWith("[")) {
     const end = authority.indexOf("]");
-    return end >= 0 && authority.slice(end + 1).startsWith(":");
+    if (end < 0) return authority;
+    const tail = authority.slice(end + 1);
+    if (!tail) return authority;
+    if (tail.startsWith(":")) return null;
+    return authority;
   }
-  return authority.includes(":");
+  if (authority.includes(":")) return null;
+  return authority;
+}
+
+function mapsRawPath(value: string, authority: string) {
+  const rest = value.slice("https://".length + authority.length);
+  const cut = rest.search(/[?#]/);
+  return cut === -1 ? rest : rest.slice(0, cut);
 }
 
 function googleMapsHostAllowed(host: string, pathname: string) {

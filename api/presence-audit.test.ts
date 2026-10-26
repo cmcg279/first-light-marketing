@@ -961,6 +961,14 @@ describe("presence audit API", () => {
       ["HarbourCafe", false],
       ["123456789", false],
       ["12345678901234567890123", false],
+      ["https:www.google.com/maps/place/X", false],
+      ["https:/www.google.com/maps", false],
+      ["https:///www.google.com/maps", false],
+      ["https://%77ww.google.com/maps/place/X", false],
+      ["https://www.google%2ecom/maps/place/X", false],
+      ["https://www.google.com/x/../maps", false],
+      ["https://www.google.com/./maps", false],
+      ["https://www.google.com/%2e%2e/maps", false],
     ];
     for (const [googleMaps, ok] of table) {
       const store = memoryStore();
