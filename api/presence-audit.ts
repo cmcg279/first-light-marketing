@@ -72,9 +72,9 @@ const ERROR_TEXT: Record<string, string> = {
   bad_input: "The job was rejected before it ran.",
   website_unreachable: "The website could not be fetched.",
   social_required: "A required social profile was missing, so the run was cancelled.",
-  timeout: "The audit ran out of time.",
-  internal: "The audit failed inside the worker.",
-  start_failed: "The audit worker could not be started.",
+  timeout: "The report ran out of time.",
+  internal: "The report failed inside the worker.",
+  start_failed: "The worker could not start the report.",
 };
 const TRACKING_STOPPED =
   "Tracking stopped. The worker has no cancel, so this report may still be running and the spend may already be committed. Another report cannot start until this one finishes or 16 minutes have passed.";
@@ -630,14 +630,14 @@ export function describeRun(run: PresenceRun) {
   if (run.status === "needs_review") {
     const reasons = run.qualityFailures.map(failureMessage);
     return reasons.length
-      ? `Needs review. ${reasons.join(" ")} The report was produced, but it is not a completed audit.`
-      : "Needs review. The report failed a readiness check, so it is not a completed audit.";
+      ? `Needs review. ${reasons.join(" ")} The report was produced, but it is not a completed report.`
+      : "Needs review. The report failed a readiness check, so it is not a completed report.";
   }
   if (run.status === "failed" || run.status === "cancelled") {
     const known = run.errorCode ? ERROR_TEXT[run.errorCode] : "";
     const detail = safeDetail(run.errorMessage);
     if (known && detail && detail !== known) return `${known} ${detail}`;
-    return known || detail || (run.status === "cancelled" ? "The run was cancelled." : "The audit failed.");
+    return known || detail || (run.status === "cancelled" ? "The run was cancelled." : "The report failed.");
   }
   if (run.status === "succeeded") return "Completed.";
   if (run.status === "running") return "Running.";
@@ -783,10 +783,10 @@ async function createRun(input: PresenceRequest, now: Date, requestedBy: string,
 async function downloadRun(input: PresenceRequest, id: string, now: Date) {
   const run = await refreshRun(input, await requireRun(input, id), now, true);
   if (run.status !== "succeeded" || run.pdfKey !== pdfObjectKey(run)) {
-    throw new PresenceError(409, "The audit report is not ready to download yet.");
+    throw new PresenceError(409, "The report is not ready to download yet.");
   }
   if (!(await input.store.pdfExists(run.pdfKey))) {
-    throw new PresenceError(409, "The audit report is not ready to download yet.");
+    throw new PresenceError(409, "The report is not ready to download yet.");
   }
   const downloadUrl = await input.store.presign(run.pdfKey, safeDownloadName(run.fileName));
   return json(200, { downloadUrl, expiresIn: DOWNLOAD_SECONDS });
@@ -827,15 +827,15 @@ async function dispatch(input: PresenceRequest, run: PresenceRun, reservation: S
   } catch (error) {
     if (asHttpError(error)?.statusCode === 503) throw error;
     console.error("Presence worker invoke failed.");
-    const failed = await failOpen(input, run, "start_failed", "The audit worker could not be started.", reservation, now);
+    const failed = await failOpen(input, run, "start_failed", "The worker could not start the report.", reservation, now);
     void failed;
-    throw new PresenceError(502, "The audit worker could not be started.");
+    throw new PresenceError(502, "The worker could not start the report.");
   }
 
   if ((outcome.statusCode !== 202 && outcome.statusCode !== 200) || outcome.functionError) {
     console.error("Presence worker invoke was rejected.");
-    await failOpen(input, run, "start_failed", "The audit worker could not be started.", reservation, now);
-    throw new PresenceError(502, "The audit worker could not be started.");
+    await failOpen(input, run, "start_failed", "The worker could not start the report.", reservation, now);
+    throw new PresenceError(502, "The worker could not start the report.");
   }
 
   const inspected = outcome.payload ? overlayWorkerResult(run, outcome.payload) : await input.store.getRun(run.id);
@@ -958,7 +958,7 @@ async function releaseLockIfFinished(input: PresenceRequest, run: PresenceRun) {
 
 async function requireRun(input: PresenceRequest, id: string) {
   const run = await input.store.getRun(id);
-  if (!run || run.id !== id) throw new PresenceError(404, "Audit run not found.");
+  if (!run || run.id !== id) throw new PresenceError(404, "Report not found.");
   return run;
 }
 
@@ -966,7 +966,7 @@ function assertWorker(config: PresenceConfig) {
   if (!config.workerConfigured || !config.bucket) {
     throw new PresenceError(
       503,
-      "The audit worker is not deployed on this stack yet. Set FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG and deploy before starting a run.",
+      "The worker is not deployed on this stack yet. Set FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG and deploy before starting a report.",
     );
   }
 }
@@ -1053,9 +1053,12 @@ function readFacebookHandle(value: unknown): string | undefined {
     fail("handles.facebook must be a Facebook Page name or address");
   }
   const handle = value.trim();
-  if (/\s/.test(handle)) fail(FACEBOOK_WHITESPACE);
+  if (FACEBOOK_DISALLOWED.test(value) || FACEBOOK_DISALLOWED.test(handle)) fail(FACEBOOK_WHITESPACE);
   return handle;
 }
+
+/** Spaces and zero-width characters. Keep in sync with FACEBOOK_DISALLOWED in src/lib/presenceReport.ts. */
+const FACEBOOK_DISALLOWED = /[\s\u200b-\u200d\u2060\u180e\ufeff]/;
 
 function spendReservation(projected: Projection, capCents: number): SpendReservation | null {
   if (projected.costDeltaCents === 0) return null;
@@ -1285,7 +1288,7 @@ function spendSummary(config: PresenceConfig, month: string, monthCents: number)
 
 function capMessage(config: PresenceConfig, monthCents: number) {
   return (
-    `This month's presence audits are at ${formatUsd(monthCents)} of the ${formatUsd(config.capCents)} cap. ` +
+    `This month's reports are at ${formatUsd(monthCents)} of the ${formatUsd(config.capCents)} cap. ` +
     `A real run is estimated at ${formatUsd(config.estimateCents)}, so it was not started. ` +
     "Free test runs are still available."
   );

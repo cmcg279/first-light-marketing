@@ -129,7 +129,7 @@ describe("worker contract", () => {
     assert.throws(() => validateJob({ ...base, handles: { tiktok: "a" } }), /TikTok/);
     assert.throws(() => validateJob({ ...base, handles: { youtube: "harbour" } }), /youtube/);
     assert.throws(() => validateJob({ ...base, handles: { x: "harbour" } }), /unknown field/);
-    for (const facebook of ["Harbour Cafe", "https://www.facebook.com/VP Jebb"]) {
+    for (const facebook of ["Harbour Cafe", "https://www.facebook.com/VP Jebb", "VP\u200bJebb", "\ufeffVPJebb"]) {
       assert.throws(() => validateJob({ ...base, handles: { facebook } }), /no spaces/);
       assert.throws(() => validateJob({ ...base, handles: { facebook } }), /facebook\.com\/VPJebb/);
     }
@@ -182,7 +182,7 @@ describe("result states and the cap", () => {
     assert.equal(reviewPublic.completed, false);
     assert.equal(reviewPublic.downloadReady, false);
     assert.match(reviewPublic.statusMessage, /longer than 35 pages/);
-    assert.match(reviewPublic.statusMessage, /not a completed audit/);
+    assert.match(reviewPublic.statusMessage, /not a completed report/);
 
     const unreachableRun = overlayWorkerResult(run, { status: "failed", error: { code: "website_unreachable", message: "the website could not be fetched" } });
     const unreachable = publicRun(unreachableRun);
@@ -296,6 +296,8 @@ describe("presence audit API", () => {
       [{ ...validBody(), handles: { instagram: "bad handle" } }, /Instagram/],
       [{ ...validBody(), handles: { facebook: "Harbour Cafe" } }, /no spaces/],
       [{ ...validBody(), handles: { facebook: "https://www.facebook.com/VP Jebb" } }, /facebook\.com\/VPJebb/],
+      [{ ...validBody(), handles: { facebook: "VP\u200bJebb" } }, /no spaces/],
+      [{ ...validBody(), handles: { facebook: "\ufeffVPJebb" } }, /facebook\.com\/VPJebb/],
       [{ ...validBody(), testMode: "true" }, /true or false/],
       ["{", /Invalid JSON/],
     ];

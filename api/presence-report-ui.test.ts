@@ -31,5 +31,9 @@ describe("facebook field", () => {
     assert.match(spaced || "", /no spaces/);
     assert.match(spaced || "", /facebook\.com\/VPJebb/);
     assert.match(facebookFieldError("https://www.facebook.com/VP Jebb") || "", /no spaces/);
+    assert.match(facebookFieldError("VP\u200bJebb") || "", /no spaces/);
+    assert.match(facebookFieldError("\ufeffVPJebb") || "", /facebook\.com\/VPJebb/);
+    assert.match(facebookFieldError("https://www.facebook.com/VPJebb\u200b") || "", /no spaces/);
+    assert.match(facebookFieldError("VPJebb\ufeff") || "", /no spaces/);
   });
 });

@@ -223,12 +223,18 @@ export default function Admin() {
       }
     };
 
-    const main = Promise.all([getAdminLeads(), getManagedContent(), getMediaAssets(), getAuditSettings()])
-      .then(([nextLeads, nextContent, nextMediaAssets, nextAuditSettings]) => {
+    const main = Promise.all([getAdminLeads(), getManagedContent(), getMediaAssets()])
+      .then(([nextLeads, nextContent, nextMediaAssets]) => {
         if (cancelled) return;
         setLeads(nextLeads);
         setContent(nextContent);
         setMediaAssets(nextMediaAssets);
+      })
+      .catch(noteLoadError);
+
+    const settings = getAuditSettings()
+      .then((nextAuditSettings) => {
+        if (cancelled) return;
         setAuditSettings(nextAuditSettings);
       })
       .catch(noteLoadError);
@@ -250,7 +256,7 @@ export default function Admin() {
           .catch(noteLoadError)
       : Promise.resolve();
 
-    void Promise.all([main, presence, legacy]).finally(() => {
+    void Promise.all([main, settings, presence, legacy]).finally(() => {
       if (!cancelled) setLoading(false);
     });
 

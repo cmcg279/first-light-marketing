@@ -287,7 +287,7 @@ async function pdfExists(bucket: string, key: string) {
 
 async function invokeWorker(payload: unknown) {
   const functionName = process.env.AUDIT_WORKER_FUNCTION_NAME?.trim() || "";
-  if (!functionName) throw new PresenceError(503, "The audit worker is not deployed on this stack yet.");
+  if (!functionName) throw new PresenceError(503, "The worker is not deployed on this stack yet.");
   // Event returns as soon as Lambda accepts the job. The body is included when AWS sends one
   // (a synchronous invoke, or a bad_input the caller captured). An empty body is not success.
   const result = await lambda.send(

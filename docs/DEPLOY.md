@@ -76,7 +76,7 @@ export FIRST_LIGHT_AUDIT_RUNNER_TOKEN="the-existing-runner-token"  # required on
 
 Leave these unset for a normal production deploy. The audit worker, its role, and the social-audit JSON secret are created only when an image tag is set. Without that tag the stack does not gain a Lambda. The table, buckets, and user pool are not replaced. The existing table does gain `GSI1` (`GSI1PK` / `GSI1SK`) so presence runs can be listed without a scan. That index update is in place. The table does not gain a TTL attribute. The presence-audit lock is one item, and the next conditional put treats it as free once `expiresAt` is in the past, so DynamoDB TTL is not required. Leaving TTL off keeps that change out of the production diff, including a deploy with no worker image.
 
-Production does not set a monthly cap, so the portal does not reserve money or refuse a run for spend. `FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD` unset or `0` is that mode, and it is the CDK default (`AUDIT_MONTHLY_CAP_USD=0` on AdminFn). Each finished run still stores the worker's `cost_usd`. Dev can export a positive cap when a stack should refuse a real run that would pass it. The one-run lock and the reserved-concurrency setting are unchanged. Account spend is watched by the existing AWS Budget alert (see Alarms and budgets), not by stopping runs in Reports.
+Production does not set a monthly cap, so the portal does not reserve money or refuse a run for spend. `FIRST_LIGHT_AUDIT_MONTHLY_CAP_USD` unset or `0` is that mode, and it is the CDK default (`AUDIT_MONTHLY_CAP_USD=0` on AdminFn). Each finished run still stores the worker's `cost_usd`. Dev can export a positive cap when a stack should refuse a real run that would pass it. The one-run lock and the reserved-concurrency setting are unchanged. Account spend is watched by the existing AWS Budget alert (see Alarms and budgets), not by stopping runs in Reports. Reset that month's presence spend counter before turning a cap back on in a month that already has one: amounts left from an earlier reservation stay in the counter when the cap goes from `0` to a positive value.
 
 ```bash
 export FIRST_LIGHT_AUDIT_WORKER_IMAGE_TAG=""          # empty skips the worker
@@ -149,7 +149,7 @@ Create the dev admin user in the Cognito console (self sign-up is off). Use an e
 
 Confirm:
 
-- the marketing pages load, including a refresh on `/about` and `/blog`
+- the marketing pages load, including a refresh on `/about` and `/blog`. A blog post slug must not contain a dot: the CloudFront SPA function treats a path with a dot as a file and leaves it unchanged, so S3 returns 403. Dashes work (`my-post`), dots do not (`my.post`)
 - the contact form returns success and a row appears in the dev table
 - no email arrives
 - `/admin` signs in with the password only
@@ -212,7 +212,7 @@ curl -sS -D - -o /dev/null -X OPTIONS "$SITE/api/contact" \
   -H "Access-Control-Request-Headers: content-type,x-amz-content-sha256,x-first-light-authorization"
 ```
 
-Expect 204, `access-control-allow-origin: http://localhost:5173`, and an allow-headers value that includes `x-amz-content-sha256`. Repeat with `Origin: https://evil.example`. That response must not echo the evil origin.
+Expect 204, `access-control-allow-origin: http://localhost:5173`, and an allow-headers value that includes `x-amz-content-sha256`. Repeat with `Origin: https://evil.example`. That response must not echo the evil origin. The function always sends `access-control-allow-methods`, `access-control-allow-headers`, and `access-control-max-age`. It sets `access-control-allow-origin` only when the request `Origin` is in the allowed-origins list. Production adds `https://` plus each `FIRST_LIGHT_DOMAIN_NAMES` entry, and `https://d2w5467qfdqefq.cloudfront.net`, to that list. With the production domain export, a preflight from `https://firstlightmarketing.co.uk` or `https://www.firstlightmarketing.co.uk` gets `access-control-allow-origin` echoed back. A synth that leaves `FIRST_LIGHT_DOMAIN_NAMES` unset does not include the apex, so that preflight omits `access-control-allow-origin`.
 
 ### MFA enrolment on dev, including abandoning it
 

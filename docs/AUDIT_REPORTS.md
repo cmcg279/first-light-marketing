@@ -81,7 +81,7 @@ A PDF on its own does not complete a run. Download is offered only when the stat
 | Worker status | What the tab shows |
 | --- | --- |
 | `succeeded` | Completed. Download is available once the PDF is there |
-| `needs_review` | Needs review. Includes `quality_gate.failures` such as `too_many_pages` (more than 35 pages). Not a completed audit |
+| `needs_review` | Needs review. Includes `quality_gate.failures` such as `too_many_pages` (more than 35 pages). Not a completed report |
 | `failed` | Failed. `website_unreachable`, `bad_input`, `timeout`, `internal` |
 | `cancelled` | Cancelled. Includes `social_required` |
 | `running` / `queued` | Running or Queued, until the 16-minute limit |

@@ -6,11 +6,14 @@ export const FACEBOOK_FIELD_HINT =
 export const FACEBOOK_SPACE_MESSAGE =
   "Facebook takes a page URL or its URL name, with no spaces. For example https://www.facebook.com/VPJebb.";
 
-/** Empty is allowed. A value with spaces is rejected before the form submits. */
+/** Spaces and zero-width characters. Keep in sync with readFacebookHandle in api/presence-audit.ts. */
+const FACEBOOK_DISALLOWED = /[\s\u200b-\u200d\u2060\u180e\ufeff]/;
+
+/** Empty is allowed. Spaces and invisible characters are rejected before the form submits. */
 export function facebookFieldError(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  if (/\s/.test(trimmed)) return FACEBOOK_SPACE_MESSAGE;
+  if (FACEBOOK_DISALLOWED.test(value)) return FACEBOOK_SPACE_MESSAGE;
   return null;
 }
 
