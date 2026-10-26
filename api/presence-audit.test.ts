@@ -816,6 +816,7 @@ describe("presence audit API", () => {
       "https://maps.app.goo.gl/xyz",
       "https://goo.gl/maps/xyz",
       "ChIJN1t_tDeuEmsRUsoyG83frY4",
+      "12345678901234567890",
       "https://www.google.co.uk/maps/place/London",
       "https://google.de/maps/place/Berlin",
       "https://www.google.com./maps/place/Harbour",
@@ -924,6 +925,81 @@ describe("presence audit API", () => {
       assert.match((response.body as { error: string }).error, /Unknown field/);
       assert.equal(store.inserts, 0);
     }
+  });
+
+  it("allows no website when a Maps link or a social handle is set, and omits website from the job", async () => {
+    const mapsStore = memoryStore();
+    const maps = await postRun(
+      mapsStore,
+      { company: "Harbour Cafe", googleMaps: "https://maps.google.com/?cid=12345678901234567890", testMode: true },
+      testConfig(),
+    );
+    assert.equal(maps.statusCode, 200);
+    assert.equal((maps.body as { run: { website: string; googleMaps: string } }).run.website, "");
+    assert.equal((maps.body as { run: { googleMaps: string } }).run.googleMaps, "https://maps.google.com/?cid=12345678901234567890");
+    const mapsJob = mapsStore.invocations[0] as WorkerJob;
+    assert.equal("website" in mapsJob, false);
+    assert.equal(mapsJob.options.google_maps, "https://maps.google.com/?cid=12345678901234567890");
+
+    const handleStore = memoryStore();
+    const handle = await postRun(
+      handleStore,
+      { company: "Harbour Cafe", handles: { instagram: "harbourcafe" }, testMode: true },
+      testConfig(),
+    );
+    assert.equal(handle.statusCode, 200);
+    assert.equal((handle.body as { run: { website: string } }).run.website, "");
+    const handleJob = handleStore.invocations[0] as WorkerJob;
+    assert.equal("website" in handleJob, false);
+    assert.equal(handleJob.handles.instagram, "harbourcafe");
+
+    const bare = await postRun(memoryStore(), { company: "Harbour Cafe", testMode: true }, testConfig());
+    assert.equal(bare.statusCode, 422);
+    assert.equal((bare.body as { error: string }).error, "Add a website, a Google Maps link, or a social handle.");
+
+    const stillRequired = memoryStore();
+    const withSite = await postRun(stillRequired, validBody(), testConfig());
+    assert.equal(withSite.statusCode, 200);
+    assert.equal((stillRequired.invocations[0] as WorkerJob).website, "https://harbour.example");
+
+    const anchored = sampleRun({ website: "", googleMaps: "https://maps.app.goo.gl/xyz" });
+    const anchoredJob = workerPayload(anchored);
+    assert.equal("website" in anchoredJob, false);
+    assert.equal(validateJob(anchoredJob).website, undefined);
+    assert.equal("website" in validateJob(anchoredJob), false);
+    const roundTrip = runFromItem(runToItem(anchored, anchoredJob));
+    assert.equal(roundTrip?.website, "");
+    assert.equal(roundTrip?.googleMaps, "https://maps.app.goo.gl/xyz");
+    assert.equal(publicRun(anchored).website, "");
+    assert.throws(() => validateJob({ ...anchoredJob, website: "http://harbour.example" }), /https:\/\//);
+    assert.throws(() => validateJob({ ...anchoredJob, website: "" }), /website is required/);
+
+    const retryStore = memoryStore();
+    retryStore.invokePayload = { status: "failed", error: { code: "internal", message: "stopped" } };
+    const failed = await postRun(
+      retryStore,
+      { company: "Harbour Cafe", googleMaps: "https://maps.app.goo.gl/xyz", testMode: true },
+      testConfig(),
+    );
+    assert.equal(failed.statusCode, 200);
+    const failedRun = (failed.body as { run: { id: string; status: string; website: string } }).run;
+    assert.equal(failedRun.website, "");
+    assert.equal(failedRun.status, "failed");
+    const retried = await handlePresenceRequest({
+      method: "POST",
+      path: `/api/admin/presence/runs/${failedRun.id}/retry`,
+      config: testConfig(),
+      now: NOW,
+      authorize: allow,
+      store: retryStore,
+    });
+    assert.equal(retried.statusCode, 200);
+    assert.equal((retried.body as { run: { website: string } }).run.website, "");
+    const retryJob = retryStore.invocations.at(-1) as WorkerJob;
+    assert.equal("website" in retryJob, false);
+    assert.equal(retryJob.options.google_maps, "https://maps.app.goo.gl/xyz");
+    assert.equal(retryJob.options.compare_to_run_id, failedRun.id);
+    assert.notEqual(retryJob.run_id, failedRun.id);
   });
 });
 

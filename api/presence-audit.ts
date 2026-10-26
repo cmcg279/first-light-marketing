@@ -113,7 +113,7 @@ export interface WorkerJob {
   requested_by: string;
   kind: "admin";
   company: string;
-  website: string;
+  website?: string;
   handles: PresenceHandles;
   brand: string;
   options: Record<string, unknown>;
@@ -307,7 +307,7 @@ export function validateJob(event: unknown): WorkerJob {
     fail("company is required (at most 120 characters)");
   }
   const company = companyRaw.trim().split(/\s+/).join(" ");
-  const website = checkWebsite(job.website);
+  const website = job.website === undefined || job.website === null ? "" : checkWebsite(job.website);
 
   const runId = job.run_id === undefined ? newRunId() : job.run_id;
   if (typeof runId !== "string" || !ULID.test(runId)) fail("run_id must be a 26-character ULID");
@@ -386,7 +386,7 @@ export function validateJob(event: unknown): WorkerJob {
     requested_by: requestedBy,
     kind: "admin",
     company,
-    website,
+    ...(website ? { website } : {}),
     handles,
     brand: brand || DEFAULT_BRAND,
     options: normalOptions(options, compareTo),
@@ -402,7 +402,7 @@ export function workerPayload(run: PresenceRun): WorkerJob {
     requested_by: run.requestedBy,
     kind: "admin",
     company: run.company,
-    website: run.website,
+    ...(run.website ? { website: run.website } : {}),
     handles: run.handles,
     brand: run.brand || DEFAULT_BRAND,
     options: {
@@ -1011,7 +1011,7 @@ function parseRunInput(rawBody: string | undefined, config: PresenceConfig): Par
     if (!REQUEST_KEYS.has(key)) throw new PresenceError(422, `Unknown field ${key}.`);
   }
   const company = requiredCompany(body.company);
-  const website = checkWebsite(body.website);
+  const website = optionalWebsite(body.website);
   const handles = parseHandles(body.handles);
   const business = body.business === undefined || body.business === null || body.business === "" ? "" : requiredBounded(body.business, "Legal name", 200);
   const area = body.area === undefined || body.area === null || body.area === "" ? "" : requiredBounded(body.area, "Area", 60);
@@ -1027,6 +1027,9 @@ function parseRunInput(rawBody: string | undefined, config: PresenceConfig): Par
     businessRaw === undefined || businessRaw === null || businessRaw === ""
       ? slugifyBusinessId(company)
       : requiredSlug(businessRaw);
+  if (!website && !googleMaps && !handles.instagram && !handles.tiktok && !handles.facebook) {
+    throw new PresenceError(422, "Add a website, a Google Maps link, or a social handle.");
+  }
   return { company, website, handles, business, area, googleMaps, businessId, testMode, compareToRunId };
 }
 
@@ -1084,6 +1087,12 @@ function spendReservation(projected: Projection, capCents: number): SpendReserva
   // No cap means the month counter was never created. Recording cost_usd stays on the run row.
   if (mode === "reconcile" && capCents <= 0) return null;
   return { month: projected.run.month, deltaCents: projected.costDeltaCents, mode, capCents };
+}
+
+function optionalWebsite(value: unknown) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string" && !value.trim()) return "";
+  return checkWebsite(value);
 }
 
 function checkWebsite(value: unknown) {

@@ -1498,7 +1498,7 @@ function PresenceAudits({
   }, [runs, onRefresh]);
 
   const realBlocked = !spend.realRunsEnabled;
-  const canSubmit = Boolean(company.trim() && website.trim() && spend.workerConfigured) && !saving;
+  const canSubmit = Boolean(company.trim() && spend.workerConfigured) && !saving;
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -1511,7 +1511,7 @@ function PresenceAudits({
     if (facebook.trim()) handles.facebook = facebook.trim();
     onCreate({
       company,
-      website,
+      ...(website.trim() ? { website: website.trim() } : {}),
       ...(Object.keys(handles).length > 0 ? { handles } : {}),
       ...(legalName.trim() ? { business: legalName.trim() } : {}),
       ...(area.trim() ? { area: area.trim() } : {}),
@@ -1526,7 +1526,7 @@ function PresenceAudits({
         <form onSubmit={submit} className="rounded-lg border border-body/10 bg-cream p-6">
           <h2 className="font-serif text-2xl font-bold text-body">New report</h2>
           <p className="mt-2 font-sans text-sm leading-relaxed text-body/60">
-            Company and an https website. Instagram, TikTok, and Facebook are optional. A PDF can be downloaded when the report succeeds or needs review. Check a needs-review PDF before sending it to a client.
+            Company is required. Website is optional. With no website, add a Google Maps link or a social handle. A PDF can be downloaded when the report succeeds or needs review. Check a needs-review PDF before sending it to a client.
           </p>
           {!spend.workerConfigured && (
             <p className="mt-4 rounded-lg border border-body/10 bg-white px-3 py-2 font-sans text-sm leading-relaxed text-body/70">
@@ -1535,7 +1535,7 @@ function PresenceAudits({
           )}
           <div className="mt-7 grid gap-5">
             <TextField label="Company" value={company} onChange={setCompany} />
-            <TextField label="Website" value={website} onChange={setWebsite} />
+            <TextField label="Website (optional)" value={website} onChange={setWebsite} />
             <TextField label="Instagram" value={instagram} onChange={setInstagram} />
             <TextField label="TikTok" value={tiktok} onChange={setTiktok} />
             <TextField
@@ -1644,14 +1644,18 @@ function PresenceAudits({
                       <tr key={run.id} className="border-b border-body/10 align-top last:border-b-0">
                         <td className="px-6 py-4">
                           <p className="font-serif text-lg font-bold text-body">{run.company}</p>
-                          <a
-                            href={run.website}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-1 block max-w-[220px] truncate font-sans text-xs text-body/50 underline-offset-2 hover:text-coral hover:underline"
-                          >
-                            {run.website}
-                          </a>
+                          {run.website ? (
+                            <a
+                              href={run.website}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-1 block max-w-[220px] truncate font-sans text-xs text-body/50 underline-offset-2 hover:text-coral hover:underline"
+                            >
+                              {run.website}
+                            </a>
+                          ) : (
+                            <p className="mt-1 font-sans text-xs text-body/45">No website</p>
+                          )}
                           {run.googleMaps && mapsHref && (
                             <a
                               href={mapsHref}

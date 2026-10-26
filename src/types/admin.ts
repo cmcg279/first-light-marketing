@@ -206,7 +206,7 @@ export interface PresenceSpendSummary {
 
 export interface PresenceRunInput {
   company: string;
-  website: string;
+  website?: string;
   handles?: {
     instagram?: string;
     tiktok?: string;
